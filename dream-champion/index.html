@@ -5,36 +5,66 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0a0d1c">
-<title>Knox & the Nightmares · Dream Champion</title>
-
-
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#000000">
+<title>Knox & the Nightmares</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="assets/ui/icon-180.png">
+<link rel="icon" href="assets/ui/icon-180.png">
 <link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three/three.module.js", "three/addons/": "./vendor/three/addons/" } }
+</script>
+<link rel="modulepreload" href="./vendor/three/three.module.js">
+<link rel="modulepreload" href="./vendor/three/three.core.js">
 </head>
 <body>
 <div id="app">
   <canvas id="gl"></canvas>
-  <div id="pad"></div>
-  <div id="stick"><i></i></div>
-  <div id="flash"></div><div id="arrows"></div>
-  <div id="hud">
-    <div class="toprow"><div id="hearts"></div><div id="wave"></div><button class="ib" id="bMute" aria-label="Sound">🔊</button><button class="ib" id="bPause" aria-label="Pause">⏸</button></div>
-    <div id="boss"><b id="bossName"></b><div><i id="bossBar"></i></div></div>
-    <div id="power"></div><div id="objective"></div><div id="scoreboard"><small>DREAM SCORE</small><strong id="score">0</strong><span id="combo"></span></div>
+
+  <!-- gameplay HUD -->
+  <div id="hud" class="hidden">
+    <div id="reticle"><i></i><i></i><i></i><i></i><b></b></div>
+    <div id="hitmark"><i></i><i></i></div>
+    <div id="dmgnums"></div>
+    <div id="dmgdir"></div>
+    <div id="vignette"></div>
+    <div id="lowhp"></div>
+
+    <div id="topleft">
+      <div id="hpwrap"><div id="hpbar"><i></i><i></i><i></i><i></i><i></i></div><div id="hplabel">STAY ASLEEP</div></div>
+      <div id="stats"><div><small>KILLS</small><strong id="kills">0</strong></div><div id="streakwrap"><small>STREAK</small><strong id="streak">×1</strong><span id="streakbar"><i></i></span></div></div>
+    </div>
+    <div id="topcenter"><div id="worldname"></div><div id="objective"></div></div>
+    <div id="topright"><button class="ib" id="bMute" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path class="wave" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2"/></svg></button><button class="ib" id="bPause" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button></div>
+
+    <div id="bossbar"><div id="bossname"></div><div id="bosssub"></div><div id="bosstrack"><i id="bossfill"></i><s></s><s></s></div></div>
+    <div id="banner"></div>
+    <div id="stamp"></div>
+    <div id="killfeed"></div>
+    <div id="pickupmsg"></div>
+    <div id="ghost"></div>
+
+    <div id="stick"><i></i></div>
+    <div id="ctl">
+      <button id="bDash" aria-label="Dash"><svg viewBox="0 0 24 24"><path d="M3 12h9l-3-4m3 4-3 4M14 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>DASH</span><em><i></i><i></i></em></button>
+      <button id="bFire" aria-label="Blast"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span>BLAST</span></button>
+      <button id="bUlt" aria-label="Nightmare Breaker"><svg viewBox="0 0 24 24"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6v3h10v-3c1.5-1 3-3 3-6a8 8 0 0 0-8-8zm-3 9a1.6 1.6 0 1 1 0 3.2A1.6 1.6 0 0 1 9 11zm6 0a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2zm-3 4 1 2h-2z"/><path d="M9 21h6" stroke="currentColor" stroke-width="2"/></svg><span>BREAKER</span><i id="ultfill"></i></button>
+    </div>
   </div>
-  <div id="ctl"><button id="bDash">DASH</button><button id="bFire" aria-label="Hold to blast"><span>✦</span>BLAST</button><button id="bPulse" aria-label="Dream pulse"><span>◎</span>PULSE</button></div>
-  <div id="victoryCard"></div><div id="banner"></div><div id="touchHint">LEFT THUMB TO MOVE <span>HOLD BLAST TO FIRE · DASH TO DODGE</span></div><div id="joystickHint"><i>＋</i><span>MOVE</span></div><div id="portraitHint">↻ <span>Turn your iPhone sideways for the full adventure</span></div>
-  <div id="ov"></div>
-  <div id="load"><div><small>ENTERING THE DREAM</small><b>KNOX</b><span class="load-line"></span><p>Waking up your inner hero…</p></div></div>
+
+  <!-- cinematic letterbox + fx layers -->
+  <div id="letterbox"><i></i><i></i></div>
+  <div id="flash"></div>
+  <div id="tear"></div>
+  <div id="fade"></div>
+
+  <!-- overlays -->
+  <div id="ov" class="hidden"></div>
+  <div id="portraitHint"><b>↻</b><span>Turn your phone sideways</span><small>Knox & the Nightmares plays in landscape</small></div>
+
+  <div id="load"><div class="loadbox"><small>DON'T WAKE UP</small><b>KNOX</b><div class="core"><i id="loadfill"></i></div><p id="loadmsg">Loading the dream…</p></div></div>
 </div>
-<script src="vendor/three.min.js"></script>
-<script src="vendor/GLTFLoader.js"></script>
-<script src="vendor/CopyShader.js"></script>
-<script src="vendor/LuminosityHighPassShader.js"></script>
-<script src="vendor/EffectComposer.js"></script>
-<script src="vendor/RenderPass.js"></script>
-<script src="vendor/ShaderPass.js"></script>
-<script src="vendor/UnrealBloomPass.js"></script>
-<script src="game.js"></script>
+<script type="module" src="./src/main.js"></script>
 </body>
 </html>
