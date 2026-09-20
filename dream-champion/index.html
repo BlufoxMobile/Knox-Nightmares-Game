@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0a0d1c">
+<title>Knox & the Nightmares · Dream Champion</title>
+
+
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <canvas id="gl"></canvas>
+  <div id="pad"></div>
+  <div id="stick"><i></i></div>
+  <div id="flash"></div><div id="arrows"></div>
+  <div id="hud">
+    <div class="toprow"><div id="hearts"></div><div id="wave"></div><button class="ib" id="bMute" aria-label="Sound">🔊</button><button class="ib" id="bPause" aria-label="Pause">⏸</button></div>
+    <div id="boss"><b id="bossName"></b><div><i id="bossBar"></i></div></div>
+    <div id="power"></div><div id="objective"></div><div id="scoreboard"><small>DREAM SCORE</small><strong id="score">0</strong><span id="combo"></span></div>
+  </div>
+  <div id="ctl"><button id="bDash">DASH</button><button id="bFire" aria-label="Hold to blast"><span>✦</span>BLAST</button><button id="bPulse" aria-label="Dream pulse"><span>◎</span>PULSE</button></div>
+  <div id="victoryCard"></div><div id="banner"></div><div id="touchHint">LEFT THUMB TO MOVE <span>HOLD BLAST TO FIRE · DASH TO DODGE</span></div><div id="joystickHint"><i>＋</i><span>MOVE</span></div><div id="portraitHint">↻ <span>Turn your iPhone sideways for the full adventure</span></div>
+  <div id="ov"></div>
+  <div id="load"><div><small>ENTERING THE DREAM</small><b>KNOX</b><span class="load-line"></span><p>Waking up your inner hero…</p></div></div>
+</div>
+<script src="vendor/three.min.js"></script>
+<script src="vendor/GLTFLoader.js"></script>
+<script src="vendor/CopyShader.js"></script>
+<script src="vendor/LuminosityHighPassShader.js"></script>
+<script src="vendor/EffectComposer.js"></script>
+<script src="vendor/RenderPass.js"></script>
+<script src="vendor/ShaderPass.js"></script>
+<script src="vendor/UnrealBloomPass.js"></script>
+<script src="game.js"></script>
+</body>
+</html>
