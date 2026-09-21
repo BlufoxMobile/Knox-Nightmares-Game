@@ -20,10 +20,7 @@ export class Player {
     this.roll = { t: -1, dirx: 0, dirz: 0, charges: ROLL.charges, refill: 0, buffered: false, perfect: false };
     this.fireCd = 0; this.aimW = 0; this.aimT = 0; this.combatT = 0; this.chargeT = 0; this.charging = false; this.locked = null; this.lockT = 0; this.tapLock = 0;
     this.cam = { yaw: Math.PI, pitch: -0.17, dist: 5.0, targetDist: 5.0, fov: 50, pos: new THREE.Vector3(), lookAt: new THREE.Vector3(), shoulder: 0.55, side: 1, autoT: 0, sway: 0, fovKick: 0 };   // fovKick MUST start at 0: undefined made the fov expression NaN, so the camera silently kept whatever fov the title/cine camera left behind (38deg) until the first shot
-    // Heading latch (see fixedUpdate): while the stick is held, the world direction Knox travels is pinned to the
-    // camera yaw from the moment of the push, so the auto-follow can swing the camera without rotating the map
-    // under the player's thumb. base = the camera yaw frozen at the moment of the push.
-    this.moveRef = { on: false, base: 0 };
+    this.idleT = 0;   // seconds since the stick was released; gates the camera easing round behind him
     this.shakeT = 0; this.trauma = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
     this.ammoKey = 'starfire'; this.ammo = AMMO.starfire; this.swim = false; this.bob = 0; this.footT = 0; this.lampOn = true;
     this.root = new THREE.Group(); ctx.scene.add(this.root); this.visible = true;
@@ -51,7 +48,7 @@ export class Player {
   setWorld(theme) {
     this.swim = !!theme.underwater; this.ammoKey = theme.ammo; this.ammo = AMMO[theme.ammo]; this.gear.blaster.glowMat.emissive.set(this.ammo.color); this.gear.blaster.glowMat.color.set(this.ammo.color);
     this.hp = this.maxhp; this.ult = 0; this.combo = 1; this.comboT = 0; this.alive = true; this.dead = false; this.roll.charges = ROLL.charges; this.iframes = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
-    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.locked = null; this.moveRef.on = false;
+    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.locked = null; this.idleT = 0;
     this.anim.stopAll(); this.anim.play(this.swim ? 'swim_idle' : 'combat_idle', 0); this.root.visible = true; this.combatT = 0;
     this.y = this.swim ? 0.35 : 0;
   }
@@ -68,22 +65,15 @@ export class Player {
     const look = g.save.data.settings.look || 1; const yawIn = inp.ldx * 0.0028 * look, pitchIn = inp.ldy * 0.0022 * look;
     const friction = this.locked ? (this.lockAng < 3 * Math.PI / 180 ? 0.4 : this.lockAng < 6 * Math.PI / 180 ? 0.55 : 1) : 1;
     this.cam.yaw -= yawIn * friction; this.cam.pitch = clamp(this.cam.pitch - pitchIn * friction, this.swim ? -1.1 : -0.95, this.swim ? 0.9 : 0.42);
-    // A camera turn the PLAYER asked for re-bases the heading latch, so dragging to look also steers where Knox
-    // runs. A camera turn the auto-follow made must NOT, which is the whole reason the follow can't spin now.
-    if (this.moveRef.on) this.moveRef.base -= yawIn * friction;
     const looking = Math.abs(inp.ldx) + Math.abs(inp.ldy) > 0.5; if (looking) this.cam.autoT = 0.5; else this.cam.autoT -= step;
-    // Movement. Camera-relative at the instant the stick is pushed, then LATCHED: while it is held, the stick
-    // angle maps to a fixed world heading. Pure camera-relative control plus a camera that follows travel is a
-    // positive feedback loop by construction -- "right" is always camYaw-90deg, so the camera chases its own tail
-    // (measured -2.85 rad/s before) and after half a turn left is right. Latching breaks the loop at the source:
-    // the heading simply doesn't care where the camera has swung to. Re-centring the stick re-arms the latch, so
-    // push-release-push always means "go that way on screen".
+    // Movement: LIVE camera-relative, every frame. The direction under the thumb is that direction on screen,
+    // right now, with no history. The previous version froze the mapping for the duration of a push so the
+    // camera could swing without dragging the controls round with it -- but that made the mapping stale by
+    // however far the camera had travelled: measured mid-hold after a 179deg swing, thumb-UP drove Knox 3.01 m
+    // BACKWARDS. Staleness is not an acceptable price, so the camera gives way instead (see the follow below).
     let mx = inp.mx, my = inp.my; let ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; ml = 1; }
-    const moving = ml > 0.05; const M = this.moveRef;
-    if (!moving) M.on = false; else if (!M.on) { M.on = true; M.base = this.cam.yaw; }
-    // exactly the old camera-relative mapping, but against the FROZEN yaw rather than the live one
-    const by = M.on ? M.base : this.cam.yaw;
-    const fx = Math.sin(by), fz = Math.cos(by), rx = -Math.cos(by), rz = Math.sin(by);
+    const moving = ml > 0.05;
+    const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy), rx = -Math.cos(cy), rz = Math.sin(cy);
     const wantX = fx * my + rx * mx, wantZ = fz * my + rz * mx;
     const maxSp = (this.swim ? 5.6 : 6.4) * (this.buffs.quick > 0 ? 1.15 : 1);
     // roll
@@ -126,12 +116,25 @@ export class Player {
     if (inp.ult && this.ult >= 100) g.breaker(this);
     this.combatT = enemies.some(e => e.alive) ? 3 : Math.max(0, this.combatT - step);
     // camera follow (fixed for determinism, smoothed in update)
-    // Auto-follow: swing round behind where Knox is actually travelling, so the camera shows what he faces and
-    // running away from the camera turns the view around with him. Safe now only because the heading is latched
-    // above -- the target is a fixed world angle, so this converges and stops instead of chasing itself.
-    if (this.cam.autoT <= 0 && !this.locked && this.speedN > 0.22) {
-      const ty = Math.atan2(this.vx, this.vz);
-      this.cam.yaw += clamp(angDiff(this.cam.yaw, ty) * 2.4, -2.8, 2.8) * step;
+    // Camera follow: ONLY while the stick is up.
+    //
+    // While a thumb is down the camera holds absolutely still, because under live camera-relative control the
+    // stick's own lateral angle IS the gap between the camera and Knox's heading. Any camera that closes that
+    // gap therefore turns at a rate set by the stick and never arrives -- holding a diagonal would walk him
+    // round a circle, and holding left would eventually make left mean right. There is no clever version of
+    // this: follow-while-steering and a stable mapping are the same knob pulled in opposite directions.
+    //
+    // On release the camera is free, because with no thumb down there is no mapping left to corrupt. That is
+    // the turn-around: push the way you want to go, let go, and the view swings round behind him. The window
+    // closes after a couple of seconds so it never fights a player who dragged the camera somewhere on purpose.
+    this.idleT = moving ? 0 : this.idleT + step;
+    if (this.cam.autoT <= 0 && !this.locked && this.idleT > 0.28 && this.idleT < 2.4) {
+      let dd = angDiff(this.cam.yaw, this.faceYaw);
+      // A dead-straight about-face puts the camera exactly opposite his facing, where "shortest way round" has
+      // no answer and the swing can sit on the fence. Pushing straight back IS the natural way to ask to turn
+      // around, so bias off the antipode and always commit to a side.
+      if (Math.abs(dd) > Math.PI - 1e-3) dd = (dd < 0 ? -1 : 1) * (Math.PI - 1e-3);
+      if (Math.abs(dd) > 0.04) this.cam.yaw += clamp(dd * 3.0, -3.0, 3.0) * step;
     }
     // Pull the camera onto the locked enemy. The old 1.6 rad gate meant anything behind Knox was never brought
     // into view, which is exactly the zombie-behind-you case; allow up to 150deg and let it come round.
