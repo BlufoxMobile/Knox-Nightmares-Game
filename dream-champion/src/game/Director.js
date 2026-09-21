@@ -8,9 +8,12 @@ import { P } from '../render/particles.js';
 import { rnd, pick, clamp } from '../core/math.js';
 
 const WAVES = {
-  forest: [{ cap: 5, list: [['stalker', 6]] }, { cap: 7, list: [['stalker', 8], ['crawler', 5]] }, { cap: 9, list: [['stalker', 11], ['crawler', 8]] }, { cap: 11, list: [['stalker', 9], ['crawler', 6]] }],
-  grave: [{ cap: 5, list: [['rotter', 6]] }, { cap: 7, list: [['rotter', 10], ['bloater', 3]] }, { cap: 9, list: [['rotter', 13], ['bloater', 5]] }, { cap: 11, list: [['rotter', 10], ['bloater', 4]] }],
-  sea: [{ cap: 5, list: [['reaper', 5]] }, { cap: 7, list: [['reaper', 8], ['lantern', 4]] }, { cap: 9, list: [['reaper', 11], ['lantern', 7]] }, { cap: 11, list: [['reaper', 9], ['lantern', 5]] }],
+  forest: [{ cap: 5, list: [['stalker', 6]] }, { cap: 7, list: [['stalker', 8], ['crawler', 5]] }, { cap: 9, list: [['stalker', 11], ['crawler', 7]] },
+    { cap: 10, list: [['stalker', 11], ['crawler', 8]] }, { cap: 11, list: [['stalker', 12], ['crawler', 9], ['alpha', 2]] }, { cap: 12, list: [['stalker', 12], ['crawler', 10], ['alpha', 3]] }],
+  grave: [{ cap: 5, list: [['rotter', 6]] }, { cap: 7, list: [['rotter', 10], ['bloater', 3]] }, { cap: 9, list: [['rotter', 12], ['bloater', 5]] },
+    { cap: 10, list: [['rotter', 12], ['bloater', 6]] }, { cap: 11, list: [['rotter', 14], ['bloater', 7]] }, { cap: 12, list: [['rotter', 15], ['bloater', 8]] }],
+  sea: [{ cap: 5, list: [['reaper', 5]] }, { cap: 7, list: [['reaper', 8], ['lantern', 4]] }, { cap: 9, list: [['reaper', 10], ['lantern', 6]] },
+    { cap: 10, list: [['reaper', 11], ['lantern', 7]] }, { cap: 11, list: [['reaper', 12], ['lantern', 8]] }, { cap: 12, list: [['reaper', 13], ['lantern', 9]] }],
 };
 const _c = new THREE.Color();
 
@@ -20,9 +23,9 @@ export class Director {
     this.worldKey = worldKey; this.waves = WAVES[worldKey]; this.waveIdx = -1; this.queue = []; this.spawnT = 0; this.state = 'idle'; this.stateT = 0; this.boss = null; this.killsThisWave = 0; this.wakesOnWave = 0;
     this.clearAll();
     // preload protos for this world's enemy set + boss
-    const types = new Set(); for (const w of this.waves) for (const [t] of w.list) types.add(t); types.add(this.game.world.THEME.boss); if (worldKey === 'forest') types.add('crawler'); if (worldKey === 'grave') types.add('rotter'); if (worldKey === 'sea') types.add('reaper');
+    const types = new Set(); for (const w of this.waves) for (const [t] of w.list) types.add(t); types.add(this.game.world.THEME.boss); if (worldKey === 'forest') { types.add('crawler'); types.add('alpha'); } if (worldKey === 'grave') types.add('rotter'); if (worldKey === 'sea') types.add('reaper');
     for (const t of types) { if (!this.protos[t]) this.protos[t] = new EnemyProto(this.ctx, t); }
-    this.tokens.melee = this.game.difficulty === 'brutal' ? 3 : 2;
+    this.tokens.melee = this.game.difficulty === 'brutal' ? 4 : 2;
   }
   clearAll() { for (const e of this.enemies) e.despawn(); this.enemies.length = 0; for (const p of this.pickups) this.ctx.scene.remove(p.obj); this.pickups.length = 0; this.puddles.length = 0; this.held.melee.length = 0; this.held.ranged.length = 0; this.boss = null; }
   disposeAll() { this.clearAll(); for (const k in this.pools) for (const e of this.pools[k]) { this.ctx.scene.remove(e.root); } this.pools = {}; this.protos = {}; }
@@ -36,10 +39,12 @@ export class Director {
   startLevel() { this.waveIdx = -1; this.state = 'prewave'; this.stateT = 2.2; this.game.hud.setWorld(this.game.world.THEME.name, ''); }
   nextWave() {
     this.waveIdx++; const g = this.game; if (this.waveIdx >= this.waves.length) { this.state = 'breather'; this.stateT = 7; g.hud.banner(COPY.banners.bigger, 'small'); g.audio.setMusicMix({ bed: 1, combat: 0 }, 2); g.spawnChest(); return; }
-    const w = this.waves[this.waveIdx]; this.queue = []; for (const [t, n] of w.list) for (let i = 0; i < n; i++) this.queue.push(t); this.queue.sort(() => Math.random() - 0.5);
+    const w = this.waves[this.waveIdx]; this.queue = [];
+    this.tokens.melee = (this.game.difficulty === 'brutal' ? 4 : 2) + (this.waveIdx >= 4 ? 1 : 0);
+    this.tokens.ranged = 1 + (this.waveIdx >= 3 ? 1 : 0); for (const [t, n] of w.list) for (let i = 0; i < n; i++) this.queue.push(t); this.queue.sort(() => Math.random() - 0.5);
     // trickle: first wave slower
-    this.spawnGap = [3.2, 2.2, 1.6, 1.3][this.waveIdx] ?? 1.3; this.spawnT = 0.5; this.cap = w.cap + (g.difficulty === 'brutal' ? 1 : 0); this.state = 'wave'; this.stateT = 0; this.killsThisWave = 0;
-    const th = g.world.THEME.key; const text = this.waveIdx === 0 ? COPY.banners.start : this.waveIdx === 1 ? COPY.banners.wave2 : this.waveIdx === 2 ? COPY.worlds[th].wave3 : COPY.banners.run;
+    this.spawnGap = [3.2, 2.2, 1.7, 1.45, 1.3, 1.15][this.waveIdx] ?? 1.15; this.spawnT = 0.5; this.cap = w.cap + (g.difficulty === 'brutal' ? 1 : 0); this.state = 'wave'; this.stateT = 0; this.killsThisWave = 0;
+    const th = g.world.THEME.key; const text = this.waveIdx === 0 ? COPY.banners.start : this.waveIdx === 1 ? COPY.banners.wave2 : this.waveIdx === 2 ? COPY.worlds[th].wave3 : this.waveIdx === 3 ? COPY.banners.more : this.waveIdx === 4 ? COPY.banners.run : COPY.banners.no;
     g.hud.banner(text, this.waveIdx >= 2 ? 'normal' : 'big'); g.hud.setWorld(g.world.THEME.name, `WAVE ${this.waveIdx + 1} / ${this.waves.length}`);
     g.audio.setMusicMix({ bed: 0.4, combat: Math.min(1, 0.6 + this.waveIdx * 0.15) }, 1.5); g.audio.play('sfx_wave_hit', { vol: 0.9 });
     if (th === 'grave' && this.waveIdx === 0) g.after(2.6, () => g.hud.banner(COPY.banners.graveBurst, 'small'), 'wave');

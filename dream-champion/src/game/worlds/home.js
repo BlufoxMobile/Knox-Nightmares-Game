@@ -26,7 +26,13 @@ function posterTexture(kind, w = 256, h = 384) {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4; return t;
 }
 
-export function build(ctx, tier) {
+export const PARENTS_THEME = { ...THEME, key: 'parents', name: "MUM AND DAD'S ROOM", tagline: 'Safe. For now.',
+  rig: { ...THEME.rig, hemi: [0x5f6d98, 0x16120d, 1.5], rim: [0xffb070, 0.45] },
+  grade: { ...THEME.grade, saturation: 0.95, vignette: 0.48 },
+};
+
+export function build(ctx, tier, opts = {}) {
+  const PARENTS = !!opts.parents;   // the opening: mum and dad's room, Knox climbs in between them
   const lod = tier.lod === 1; const r = seeded(2024); const D = new Disposer();
   const group = new THREE.Group(); group.name = 'home'; const SM = shadowMats(D);
   const W = 5.2, H = 2.7, L = 4.4; // room size (x, y, z)
@@ -104,13 +110,31 @@ export function build(ctx, tier) {
   add(new THREE.PlaneGeometry(1.6, 2.4).rotateX(-Math.PI / 2), poolWarm, W / 2 - .7, .012, door.z + .2, 0, { receive: false, order: 2, solo: true });
 
   // ---------- bed (left wall) ----------
-  const bed = { x: -W / 2 + .75, z: -.3, w: 1.15, l: 2.1 };
+  const bed = PARENTS ? { x: -W / 2 + 1.15, z: -.3, w: 2.0, l: 2.15 } : { x: -W / 2 + .75, z: -.3, w: 1.15, l: 2.1 };
   add(merge([new THREE.BoxGeometry(bed.w + .1, .22, bed.l + .1).translate(0, .32, 0), ...[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz]) => new THREE.BoxGeometry(.08, .32, .08).translate(sx * (bed.w / 2), .16, sz * (bed.l / 2))), new THREE.BoxGeometry(bed.w + .1, .7, .06).translate(0, .75, -bed.l / 2 - .02), new THREE.BoxGeometry(bed.w + .1, .4, .06).translate(0, .55, bed.l / 2 + .02)]), woodMat, bed.x, 0, bed.z, 0, { cast: true });
   add(new THREE.BoxGeometry(bed.w, .2, bed.l, 1, 1, 1), sheetMat, bed.x, .53, bed.z, 0, { cast: true });
-  add(new THREE.SphereGeometry(.3, 10, 8).scale(1.3, .45, .9), pillowMat, bed.x, .68, bed.z - bed.l / 2 + .38, 0, { cast: true });
+  if (PARENTS) { for (const sx of [-1, 1]) add(new THREE.SphereGeometry(.3, 10, 8).scale(1.2, .45, .9), pillowMat, bed.x + sx * .62, .68, bed.z - bed.l / 2 + .38, 0, { cast: true }); }
+  else add(new THREE.SphereGeometry(.3, 10, 8).scale(1.3, .45, .9), pillowMat, bed.x, .68, bed.z - bed.l / 2 + .38, 0, { cast: true });
   // blanket: folded top sheet with noise wrinkles, draped over the far side
   { const g = new THREE.PlaneGeometry(bed.w + .3, bed.l * .68, 10, 14).rotateX(-Math.PI / 2); const p = g.attributes.position; for (let i = 0; i < p.count; i++) { const x = p.getX(i), z = p.getZ(i); let y = Math.sin(x * 9 + z * 3) * .012 + Math.sin(z * 11 - x * 2) * .01 + Math.cos((x + z) * 15) * .006; if (x < -bed.w / 2 + .02) y -= (-bed.w / 2 + .02 - x) * 1.6; p.setY(i, y); } g.computeVertexNormals(); add(g, blanketMat, bed.x + .02, .655, bed.z + bed.l * .13, 0, { cast: true }); }
   const bedPos = { x: bed.x, y: 0.66, z: bed.z + 0.1 };
+  // ---------- sleeping parents (the opening only): a long duvet mound + shoulder + head on each pillow ----------
+  if (PARENTS) {
+    const hairMat = stdMat({ color: 0x2a2018, roughness: .9 }, fogOpts);
+    const skinMat = stdMat({ color: 0xc89b78, roughness: .75 }, fogOpts);
+    D.add(hairMat, skinMat);
+    for (const sx of [-1, 1]) {
+      const px = bed.x + sx * .62;
+      // body under the duvet: a low mound running down the bed
+      const mound = new THREE.SphereGeometry(.42, 14, 10).scale(1.0, .52, 1.75);
+      add(mound, blanketMat, px, .60, bed.z + .34, 0, { cast: true });
+      // shoulder rise nearer the pillow
+      add(new THREE.SphereGeometry(.26, 12, 9).scale(1.05, .7, 1.0), blanketMat, px, .66, bed.z - .42, 0, { cast: true });
+      // head turned slightly inward, toward the middle where Knox will be
+      add(new THREE.SphereGeometry(.15, 14, 12).scale(.92, 1.05, 1.0), skinMat, px, .82, bed.z - bed.l / 2 + .42, 0, { cast: true });
+      add(new THREE.SphereGeometry(.155, 14, 12).scale(.98, .95, 1.02), hairMat, px - sx * .01, .865, bed.z - bed.l / 2 + .36, 0, { cast: true });
+    }
+  }
 
   // ---------- nightstand, lamp, toys, shelf ----------
   add(merge([new THREE.BoxGeometry(.5, .55, .45).translate(0, .275, 0), new THREE.BoxGeometry(.52, .03, .47).translate(0, .56, 0)]), woodMat, bed.x + bed.w / 2 + .38, 0, bed.z - .6, 0, { cast: true });
@@ -133,10 +157,11 @@ export function build(ctx, tier) {
   // ---------- posters ----------
   const posterGeo = new THREE.PlaneGeometry(.62, .93); D.add(posterGeo);
   const posters = [];
-  const poster = (kind, x, y, z, ry, tilt = 0, glow = 0) => { const t = posterTexture(kind); const m = stdMat({ map: t, roughness: .9, color: 0xffffff, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: glow }, fogOpts); const mesh = new THREE.Mesh(posterGeo, m); mesh.position.set(x, y, z); mesh.rotation.y = ry; mesh.rotation.z = tilt; mesh.receiveShadow = true; group.add(mesh); D.add(t, m); return mesh; };
+  const skipPosters = PARENTS;
+  const poster = (kind, x, y, z, ry, tilt = 0, glow = 0) => { if (skipPosters) return; const t = posterTexture(kind); const m = stdMat({ map: t, roughness: .9, color: 0xffffff, emissive: 0xffffff, emissiveMap: t, emissiveIntensity: glow }, fogOpts); const mesh = new THREE.Mesh(posterGeo, m); mesh.position.set(x, y, z); mesh.rotation.y = ry; mesh.rotation.z = tilt; mesh.receiveShadow = true; group.add(mesh); D.add(t, m); return mesh; };
   poster('blaster', 0.4, 1.75, L / 2 - .02, Math.PI, .03); poster('monsters', W / 2 - .02, 1.7, -1.3, -Math.PI / 2, -.02);
   posters.push(poster('stag', -0.5, 1.9, -L / 2 + .02, 0, .02, .35), poster('king', 0.5 + 1.15, 1.9, -L / 2 + .02, 0, -.03, .35), poster('meg', W / 2 - .02, 1.7, -0.3, -Math.PI / 2, .02, .35));
-  for (const p of posters) p.visible = false;
+  for (let i = posters.length - 1; i >= 0; i--) { if (!posters[i]) posters.splice(i, 1); else posters[i].visible = false; }
 
   // ---------- star stickers on the ceiling + nightlight halo ----------
   const starTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d'); g.clearRect(0, 0, 64, 64); const rg = g.createRadialGradient(32, 32, 0, 32, 32, 30); rg.addColorStop(0, 'rgba(255,255,255,.5)'); rg.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = rg; g.fillRect(0, 0, 64, 64); g.fillStyle = '#fff'; g.beginPath(); for (let i = 0; i < 10; i++) { const a = i / 10 * TAU - Math.PI / 2, rr = i % 2 ? 7 : 18; g.lineTo(32 + Math.cos(a) * rr, 32 + Math.sin(a) * rr); } g.closePath(); g.fill(); return new THREE.CanvasTexture(c); })(); D.add(starTex);

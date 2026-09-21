@@ -19,7 +19,7 @@ export class Player {
     this.ult = 0; this.ultActive = 0; this.combo = 1; this.comboT = 0; this.kills = 0; this.headshots = 0; this.bestStreak = 1;
     this.roll = { t: -1, dirx: 0, dirz: 0, charges: ROLL.charges, refill: 0, buffered: false, perfect: false };
     this.fireCd = 0; this.aimW = 0; this.aimT = 0; this.combatT = 0; this.chargeT = 0; this.charging = false; this.locked = null; this.lockT = 0; this.tapLock = 0;
-    this.cam = { yaw: Math.PI, pitch: -0.2, dist: 3.6, targetDist: 3.6, fov: 46, pos: new THREE.Vector3(), lookAt: new THREE.Vector3(), shoulder: 0.55, side: 1, autoT: 0, sway: 0 };
+    this.cam = { yaw: Math.PI, pitch: -0.10, dist: 3.6, targetDist: 3.6, fov: 46, pos: new THREE.Vector3(), lookAt: new THREE.Vector3(), shoulder: 0.55, side: 1, autoT: 0, sway: 0 };
     this.shakeT = 0; this.trauma = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
     this.ammoKey = 'starfire'; this.ammo = AMMO.starfire; this.swim = false; this.bob = 0; this.footT = 0; this.lampOn = true;
     this.root = new THREE.Group(); ctx.scene.add(this.root); this.visible = true;
@@ -41,7 +41,7 @@ export class Player {
   setWorld(theme) {
     this.swim = !!theme.underwater; this.ammoKey = theme.ammo; this.ammo = AMMO[theme.ammo]; this.gear.blaster.glowMat.emissive.set(this.ammo.color); this.gear.blaster.glowMat.color.set(this.ammo.color);
     this.hp = this.maxhp; this.ult = 0; this.combo = 1; this.comboT = 0; this.alive = true; this.dead = false; this.roll.charges = ROLL.charges; this.iframes = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
-    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.18; this.cam.init = false; this.locked = null;
+    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.10; this.cam.init = false; this.locked = null;
     this.anim.stopAll(); this.anim.play(this.swim ? 'swim_idle' : 'combat_idle', 0); this.root.visible = true; this.combatT = 0;
     this.y = this.swim ? 0.35 : 0;
   }
@@ -102,7 +102,7 @@ export class Player {
     // camera follow (fixed for determinism, smoothed in update)
     if (this.cam.autoT <= 0 && moving && !this.locked) { this.cam.yaw = dampAng(this.cam.yaw, Math.atan2(this.vx, this.vz), 2.2, step); }
     if (this.locked && !looking) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 0.3 * step * 3, -1.05 * step, 1.05 * step); }
-    this.cam.targetDist = (g.bossActive ? 4.4 : 3.6) - (aiming ? 0.6 : 0) + (this.swim ? 0.6 : 0);
+    this.cam.targetDist = (g.bossActive ? 4.3 : 3.6) - (aiming ? 0.5 : 0) + (this.swim ? 0.6 : 0);
     // shield/overcharge visuals
     if (this.buffs.shield > 0 && Math.random() < 0.3) this.ctx.particlesAdd.one(this.x + rnd(-.5, .5), this.y + rnd(0.2, 1.6), this.z + rnd(-.5, .5), { type: P.DOT, color: new THREE.Color(0xffcf4a), life: 0.5, size: 0.15, sizeEnd: 0, vx: 0, vy: 0.4, vz: 0 });
   }
@@ -225,7 +225,7 @@ export class Player {
     const c = this.cam; const cam = this.ctx.camera; const g = this.game;
     c.dist = damp(c.dist, c.targetDist, 8, dt);
     const shoulder = this.locked ? c.shoulder * (Math.sin(angDiff(c.yaw, Math.atan2(this.locked.x - this.x, this.locked.z - this.z))) > 0.5 ? -1 : 1) : c.shoulder; c.side = damp(c.side, shoulder, 6, dt);
-    const px = this.root.position.x, pz = this.root.position.z, py = this.y + 1.3;
+    const px = this.root.position.x, pz = this.root.position.z, py = this.y + 1.12;
     const fx = Math.sin(c.yaw) * Math.cos(c.pitch), fy = Math.sin(c.pitch), fz = Math.cos(c.yaw) * Math.cos(c.pitch); const rx = Math.cos(c.yaw), rz = -Math.sin(c.yaw);
     let cx = px - fx * c.dist + rx * c.side, cy = py - fy * c.dist + 0.1, cz = pz - fz * c.dist + rz * c.side;
     // keep camera above ground & inside arena dressing

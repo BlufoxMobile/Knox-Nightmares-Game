@@ -86,9 +86,65 @@ export class Game {
   }
   async beginAdventure() {
     panels.hide(); const first = !save.data.settings.seenIntro;
+    await this.bedtime();                      // Knox climbs in between mum and dad, every run
     if (first) { save.data.settings.seenIntro = true; save.write(); await this.blasterWake(); await panels.coldOpen(COPY.coldOpen); this.audio.play('sfx_whisper_knox', { vol: 0.8 }); await this.enterWorld('forest'); }
     else { await this.blasterWake(); this.map(); }
   }
+  // ---------- opening: mum and dad's room ----------
+  async bedtime() {
+    const p = this.player;
+    this.state = 'cine'; this.cancel(); panels.hide(); hud.hide(); this.input.reset(); this.input.unlockMouse();
+    this._cineSkip = false; this._cineWaiters = [];
+    const skip = () => this.skipCine();
+    addEventListener('pointerdown', skip); addEventListener('keydown', skip);
+    hud.ghost(COPY.ghost.skip); this.after(2.0, () => hud.ghost(null), 'cine');
+    fxdom.fade(1, 600); await new Promise(r => setTimeout(r, 650));
+    await this.assets.loadGroup('home');
+    this.unloadWorld();
+    const W = WORLDS.parents; const env = W.build(this.ctx, this.renderer.tier);
+    this.scene.add(env.group); this.world = { key: 'parents', THEME: W.THEME, env }; this.worldKey = 'parents';
+    this.sky.apply(W.THEME.sky); this.lighting.apply(W.THEME.rig);
+    Object.assign(this.renderer.grade, { exposure: W.THEME.grade.exposure, saturation: W.THEME.grade.saturation, contrast: W.THEME.grade.contrast, bloom: W.THEME.grade.bloom, vignette: W.THEME.grade.vignette });
+    this.renderer.grade.lift.fromArray(W.THEME.grade.lift); this.renderer.grade.gain.fromArray(W.THEME.grade.gain);
+    this.renderer.fx.underwater = 0; this.sky.uniforms.underwater.value = 0; this.audio.setWorldFilter(false);
+    this.heroLightsOff(); this.audio.setMusic({ bed: 'home' }, 2); this.audio.setMusicMix({ bed: 1 }, 1.5);
+    // Knox stands at the near edge of the bed, no blaster yet
+    const bed = env.bedPos || { x: 0, y: 0.66, z: 0 };
+    p.gear.setVisible(false); p.lampOn = false; p.root.visible = true; p.alive = true;
+    p.anim.stopAll(); p.anim.play('look_around', 0);
+    p.root.position.set(bed.x + 0.05, 0, bed.z + 1.5); p.root.rotation.y = Math.PI;
+    p.x = p.root.position.x; p.z = p.root.position.z; p.y = 0;
+    this.lighting.setLamp(p.root.position, _v.set(0, 0, 1), false);
+    this.cine = { kind: 'bedtime', t: 0, dur: 15, bed };
+    fxdom.fade(0, 1400);
+    await this.wait(1.9);
+    // climbs in: wake_up run backwards is exactly 'lies down from sitting'
+    this.audio.play('sfx_step_grave', { vol: 0.3, vary: 0.2 });
+    const from = p.root.position.clone(), ry0 = p.root.rotation.y;
+    this.poseOnBed(p, bed, 0.07, 0);                          // head to the headboard, flat, clear of the blanket
+    const to = p.root.position.clone(), ry1 = p.root.rotation.y;
+    p.root.position.copy(from); p.root.rotation.y = ry0;
+    this.cine.climb = { from, to, ry0, ry1, t: 0, dur: 1.5 };
+    const a = p.anim.play('wake_up', 0.35);
+    if (a) { a.paused = false; a.time = (a.getClip().duration || 3.5) - 0.01; a.setEffectiveTimeScale(-0.85); a.clampWhenFinished = true; a.setLoop(THREE.LoopOnce, 1); }
+    await this.wait(3.2);
+    p.anim.play('sleep', 0.7);
+    await this.wait(1.0); this.anchorHips(p, bed.y + 0.17);   // the sleep clip carries a baked vertical offset
+    await this.wait(1.5);
+    // the room turns on him
+    this.audio.play('sfx_whisper_knox', { vol: 0.75 });
+    this.renderer.fx.desat = 0.35;
+    await this.wait(1.7);
+    fxdom.fade(1, 1200); await this.wait(1.4);
+    removeEventListener('pointerdown', skip); removeEventListener('keydown', skip); hud.ghost(null);
+    this.cine = null; this.renderer.fx.desat = 0; this._cineSkip = false;
+    this.scene.remove(env.group); env.dispose(); this.world = null; this.worldKey = null;
+  }
+  wait(sec) {
+    if (this._cineSkip) return Promise.resolve();
+    return new Promise(r => { (this._cineWaiters || (this._cineWaiters = [])).push(r); this.after(sec, () => { const w = this._cineWaiters || []; const i = w.indexOf(r); if (i >= 0) w.splice(i, 1); r(); }, 'cine'); });
+  }
+  skipCine() { this._cineSkip = true; this.cancel('cine'); const w = this._cineWaiters || []; this._cineWaiters = []; for (const r of w) r(); }
   async blasterWake() {
     // camera pushes into the blaster; core ignites
     const p = this.player; p.anim.play('draw', 0.2); this.audio.play('sfx_blaster_online', { vol: 1 }); this.audio.musicDuck(0.2, 2.5);
@@ -176,7 +232,23 @@ export class Game {
     // hero lighting for the title: cool key from the camera side, warm rim from behind
     this.heroLights(px, 0.9, pz, a, 1.6, 1.9); }
   blasterCam(dt) { const p = this.player; const c = this.cine; c.t += dt; const m = p.muzzleW; p.root.updateMatrixWorld(true); p.gear.blaster.muzzle.getWorldPosition(m); const u = clamp(c.t / c.dur, 0, 1); const hand = p.bones.RightHand.getWorldPosition(_v); this.camera.position.lerp(new THREE.Vector3(hand.x + 0.9 - u * 0.4, hand.y + 0.35, hand.z + 0.6), 1 - Math.exp(-dt * 3)); this.camera.lookAt(hand); p.gear.blaster.glowMat.emissiveIntensity = 1 + u * 8; if (u > 0.5 && Math.random() < 0.5) this.particlesAdd.one(m.x, m.y, m.z, { type: P.SPARK, color: _c.set(0x4de3ff), life: 0.3, size: 0.06, vx: rnd(-1, 1), vy: rnd(-1, 1), vz: rnd(-1, 1) }); }
-  cineCamera(dt) { if (!this.cine) return; const c = this.cine; c.t += dt; if (c.kind === 'boss') { const b = c.boss; const u = clamp(c.t / c.dur, 0, 1); const ang = c.a0 + u * 1.4; const dist = b.r * 3 + 3; this.camera.position.set(b.x + Math.sin(ang) * dist, 0.8 + u * b.height * 0.5, b.z + Math.cos(ang) * dist); this.camera.lookAt(b.x, b.y + b.height * 0.55, b.z); this.heroLights(b.x, b.y + b.height * 0.35, b.z, ang, 5 + Math.sin(c.t * 9) * 0.6, b.r + 2.6); } else if (c.kind === 'killcam') { const b = c.boss; const u = clamp(c.t / c.dur, 0, 1); const ang = c.a0 + u * 0.8; const dist = b.r * 2.5 + 3; this.camera.position.set(b.x + Math.sin(ang) * dist, 1.0 + u * 2, b.z + Math.cos(ang) * dist); this.camera.lookAt(b.x, b.y + b.height * 0.4, b.z); this.heroLights(b.x, b.y + b.height * 0.35, b.z, ang, 4, b.r + 2.6); } else if (c.kind === 'wake' || c.kind === 'ending') { const bed = this.world.env.bedPos || { x: 0, y: 0.5, z: 0 }; const u = clamp(c.t / c.dur, 0, 1); this.camera.position.set(bed.x + 1.6 - u * 0.5, bed.y + 1.6 - u * 0.4, bed.z + 2.2 - u * 0.6); this.camera.lookAt(bed.x, bed.y + 0.6, bed.z); } }
+  cineCamera(dt) {
+    if (!this.cine) return; const c = this.cine; c.t += dt;
+    if (c.kind === 'bedtime') {
+      const p = this.player, bed = c.bed;
+      if (c.climb) { // lower him onto the bed while the reversed wake_up plays
+        c.climb.t = clamp(c.climb.t + dt / c.climb.dur, 0, 1); const u = c.climb.t * c.climb.t * (3 - 2 * c.climb.t);
+        p.root.position.lerpVectors(c.climb.from, c.climb.to, u); p.root.rotation.y = lerp(c.climb.ry0, c.climb.ry1, u);
+        p.x = p.root.position.x; p.z = p.root.position.z;
+        if (c.climb.t >= 1) c.climb = null;   // stop driving the root, so later settling sticks
+      }
+      // slow push toward the pillow, settling just above him
+      const u = clamp(c.t / c.dur, 0, 1); const e = 1 - Math.pow(1 - u, 2.2);
+      this.camera.position.set(bed.x + 2.30 - e * 0.85, 2.02 - e * 0.18, bed.z + 2.20 - e * 0.75);
+      this.camera.lookAt(bed.x + 0.02, 0.80 - e * 0.04, bed.z - 0.10);
+      if (this.camera.fov !== 42) { this.camera.fov = 42; this.camera.updateProjectionMatrix(); }
+      return;
+    } if (c.kind === 'boss') { const b = c.boss; const u = clamp(c.t / c.dur, 0, 1); const ang = c.a0 + u * 1.4; const dist = b.r * 3 + 3; this.camera.position.set(b.x + Math.sin(ang) * dist, 0.8 + u * b.height * 0.5, b.z + Math.cos(ang) * dist); this.camera.lookAt(b.x, b.y + b.height * 0.55, b.z); this.heroLights(b.x, b.y + b.height * 0.35, b.z, ang, 5 + Math.sin(c.t * 9) * 0.6, b.r + 2.6); } else if (c.kind === 'killcam') { const b = c.boss; const u = clamp(c.t / c.dur, 0, 1); const ang = c.a0 + u * 0.8; const dist = b.r * 2.5 + 3; this.camera.position.set(b.x + Math.sin(ang) * dist, 1.0 + u * 2, b.z + Math.cos(ang) * dist); this.camera.lookAt(b.x, b.y + b.height * 0.4, b.z); this.heroLights(b.x, b.y + b.height * 0.35, b.z, ang, 4, b.r + 2.6); } else if (c.kind === 'wake' || c.kind === 'ending') { const bed = this.world.env.bedPos || { x: 0, y: 0.5, z: 0 }; const u = clamp(c.t / c.dur, 0, 1); this.camera.position.set(bed.x + 1.6 - u * 0.5, bed.y + 1.6 - u * 0.4, bed.z + 2.2 - u * 0.6); this.camera.lookAt(bed.x, bed.y + 0.6, bed.z); } }
   ultHint() { if (this._ultHinted || this.state !== 'play') return; this._ultHinted = true; hud.ghost(COPY.ghost.ult); this.audio.play('sfx_stamp', { vol: 0.5, ui: true }); this.after(4, () => hud.ghost(null), 'wave'); }
   tutorialStep(step, inp) { if (!this.tutorial || !this.tutorial.length) return; this.tutT -= step; if (this.tutT > 0) return; const k = this.tutorial[0]; if (!this.tutShown) { hud.ghost(COPY.ghost[k]); this.tutShown = true; } const done = (k === 'move' && (Math.abs(inp.mx) + Math.abs(inp.my) > 0.3)) || (k === 'look' && Math.abs(inp.ldx) > 2) || (k === 'blast' && (inp.fire || this.player.kills > 0)) || (k === 'dash' && this.player.roll.t >= 0); if (done) { this.tutorial.shift(); this.tutShown = false; hud.ghost(null); this.tutT = k === 'dash' ? 0 : 2; if (!this.tutorial.length) { save.data.settings.seenTut[this.worldKey] = true; save.write(); } } }
   // ---------- feedback ----------
@@ -293,12 +365,22 @@ export class Game {
     await new Promise(r => setTimeout(r, 3500)); this.finalCard();
   }
   // lay Knox on the bed: head toward the pillow (-z), lowest skinned vertex on the sheet
-  poseOnBed(p, bed) {
+  // pin the body to a height by its hips, whatever vertical offset the current clip bakes in
+  anchorHips(p, targetY) {
+    const h = p.bones && p.bones.Hips; if (!h) return;
+    p.root.updateMatrixWorld(true); const w = h.getWorldPosition(new THREE.Vector3());
+    p.root.position.y += targetY - w.y; p.root.updateMatrixWorld(true);
+  }
+  poseOnBed(p, bed, lift = 0, yaw = null) {
     p.root.position.set(bed.x, bed.y, bed.z); p.root.rotation.y = 0; p.root.updateMatrixWorld(true); p.anim.update(0.001); p.root.updateMatrixWorld(true);
     const head = p.bones.Head ? p.bones.Head.getWorldPosition(new THREE.Vector3()) : null, hips = p.bones.Hips ? p.bones.Hips.getWorldPosition(new THREE.Vector3()) : null;
-    if (head && hips) { const ang = Math.atan2(head.x - hips.x, head.z - hips.z); p.root.rotation.y = Math.PI - ang; p.root.updateMatrixWorld(true); }
+    // deriving the yaw from head-vs-hips only works once a LYING pose is actually playing; mid-crossfade
+    // the axis is vertical and atan2 returns noise, which laid him sideways across the bed.
+    if (yaw !== null) { p.root.rotation.y = yaw; p.root.updateMatrixWorld(true); }
+    else if (head && hips && Math.hypot(head.x - hips.x, head.z - hips.z) > 0.25) { const ang = Math.atan2(head.x - hips.x, head.z - hips.z); p.root.rotation.y = Math.PI - ang; p.root.updateMatrixWorld(true); }
+    else { p.root.rotation.y = Math.PI; p.root.updateMatrixWorld(true); }
     const box = new THREE.Box3(); let minY = Infinity; p.root.traverse(o => { if (o.isSkinnedMesh) { box.setFromObject(o, true); minY = Math.min(minY, box.min.y); } });
-    if (isFinite(minY)) p.root.position.y += bed.y - minY + 0.02; p.root.updateMatrixWorld(true);
+    if (isFinite(minY)) p.root.position.y += bed.y - minY + 0.02 + lift; p.root.updateMatrixWorld(true);
   }
   finalCard() { hud.hide(); panels.victory(a => { if (a === 'reset') { save.data.slain = {}; save.write(); this.state = 'map'; this.loadWorld('forest').then(() => this.title()); } else this.ending(); }); }
   primeVideo(url) { const v = document.createElement('video'); v.src = url; v.playsInline = true; v.preload = 'auto'; v.muted = false; v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:15;opacity:0'; document.getElementById('app').appendChild(v); this._primed = { v, p: v.play().catch(() => null) }; return this._primed; }

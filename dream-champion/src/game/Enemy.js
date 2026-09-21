@@ -57,7 +57,7 @@ export class Enemy {
     if (!this.alive || this.noHit) return; const g = this.game; const d = this.def;
     if (this.boss && this.bossIntro) return;
     let mul = 1;
-    if (this.boss) { mul *= this.weakOpen ? (head ? 2 : 1) : (this.enraged ? 0.55 : 0.42); } else if (head) mul = 1;
+    if (this.boss) { mul *= this.weakOpen ? (head ? 2 : 1) : (this.enraged ? 0.5 : 0.38); } else if (head) mul = 1;
     if (g.player.buffs.vision > 0) mul *= 1.2;
     const amt = Math.round(dmg * mul); this.hp -= amt; this.flash = 0.06; this.hitT = 0.25;
     const kind = head ? 'weak' : 'body'; g.onEnemyHit(this, amt, head, proj);
