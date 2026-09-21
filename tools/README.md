@@ -23,3 +23,12 @@ regenerate assets from raw inputs.
 They expect `@gltf-transform/*` and `three` in `tools/node_modules`
 (`npm i @gltf-transform/core @gltf-transform/functions @gltf-transform/extensions three`)
 and Node 20+. `ui-shots.py` needs Playwright.
+
+## Source assets
+
+`source/knox-textured.glb` is the textured Higgsfield photogrammetry scan of
+Knox as it came out of the scanner, before any rigging. It is the master the
+playable model is derived from: `reskin.mjs` binds it to a skeleton and
+`reweight.mjs` fixes the skinning weights, producing
+`dream-champion/assets/characters/knox.glb`. Keep it — it cannot be
+regenerated without re-scanning him.
