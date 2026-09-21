@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<title>Knox UI test</title>
+<link rel="stylesheet" href="../style.css">
+<style>
+  /* stand-in for the 3D frame: dark forest gradient + red moon glow + fog band */
+  #bg{position:absolute;inset:0;background:
+      radial-gradient(ellipse 30% 40% at 68% 30%,rgba(255,60,40,.35),rgba(255,60,40,0) 70%),
+      radial-gradient(ellipse 80% 40% at 50% 100%,rgba(30,40,70,.6),rgba(0,0,0,0) 70%),
+      linear-gradient(180deg,#05060f 0%,#0b0d1c 45%,#141a2a 70%,#05060a 100%)}
+  #bg::after{content:"";position:absolute;inset:0;background:repeating-linear-gradient(90deg,rgba(0,0,0,.35) 0 18px,transparent 18px 60px);opacity:.35;mask:linear-gradient(180deg,transparent 30%,#000 60%,transparent 95%);-webkit-mask:linear-gradient(180deg,transparent 30%,#000 60%,transparent 95%)}
+  /* simulated iPhone safe area (14/15 landscape) */
+  html.safe{--st:0px;--sb:21px;--sl:59px;--sr:59px}
+  html.safe #app::before,html.safe #app::after{content:"";position:absolute;top:0;bottom:0;width:59px;z-index:99;pointer-events:none;background:repeating-linear-gradient(45deg,rgba(255,255,255,.03) 0 6px,transparent 6px 12px);border-right:1px dashed rgba(255,255,255,.12)}
+  html.safe #app::before{left:0}
+  html.safe #app::after{right:0;border-right:0;border-left:1px dashed rgba(255,255,255,.12)}
+  html.safe.noguides #app::before,html.safe.noguides #app::after{display:none}
+  /* control drawer */
+  #tools{position:absolute;right:0;top:0;bottom:0;width:260px;background:rgba(10,10,16,.96);border-left:1px solid #333;z-index:200;overflow:auto;padding:10px;font:12px/1.4 ui-monospace,monospace;color:#ddd;transform:translateX(100%);transition:transform .2s}
+  #tools.open{transform:none}
+  #tools h4{margin:10px 0 4px;color:#4de3ff;font-size:11px;letter-spacing:.2em}
+  #tools button{display:inline-block;margin:2px;padding:6px 8px;background:#222;border:1px solid #444;color:#eee;font:11px ui-monospace,monospace;border-radius:4px}
+  #tools button:active{background:#4de3ff;color:#000}
+  #tab{position:absolute;right:0;top:50%;z-index:201;transform:translateY(-50%);background:#4de3ff;color:#000;border:0;padding:12px 6px;font:11px ui-monospace,monospace;writing-mode:vertical-rl;border-radius:6px 0 0 6px}
+  #tools.open ~ #tab{right:260px}
+  .hidden{display:none!important}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bg"></div>
+
+  <!-- === copy of index.html HUD DOM (ids must match) === -->
+  <div id="hud" class="hidden">
+    <div id="reticle"><i></i><i></i><i></i><i></i><b></b></div>
+    <div id="hitmark"><i></i><i></i></div>
+    <div id="dmgnums"></div>
+    <div id="dmgdir"></div>
+    <div id="vignette"></div>
+    <div id="lowhp"></div>
+    <div id="topleft">
+      <div id="hpwrap"><div id="hpbar"><i></i><i></i><i></i><i></i><i></i></div><div id="hplabel">STAY ASLEEP</div></div>
+      <div id="stats"><div><small>KILLS</small><strong id="kills">0</strong></div><div id="streakwrap"><small>STREAK</small><strong id="streak">×1</strong><span id="streakbar"><i></i></span></div></div>
+    </div>
+    <div id="topcenter"><div id="worldname"></div><div id="objective"></div></div>
+    <div id="topright"><button class="ib" id="bMute" aria-label="Sound"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path class="wave" d="M16 9a4 4 0 0 1 0 6M18.5 6.5a8 8 0 0 1 0 11" fill="none" stroke="currentColor" stroke-width="2"/></svg></button><button class="ib" id="bPause" aria-label="Pause"><svg viewBox="0 0 24 24"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg></button></div>
+    <div id="bossbar"><div id="bossname"></div><div id="bosssub"></div><div id="bosstrack"><i id="bossfill"></i><s></s><s></s></div></div>
+    <div id="banner"></div>
+    <div id="stamp"></div>
+    <div id="killfeed"></div>
+    <div id="pickupmsg"></div>
+    <div id="ghost"></div>
+    <div id="stick"><i></i></div>
+    <div id="ctl">
+      <button id="bDash" aria-label="Dash"><svg viewBox="0 0 24 24"><path d="M3 12h9l-3-4m3 4-3 4M14 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></svg><span>DASH</span><em><i></i><i></i></em></button>
+      <button id="bFire" aria-label="Blast"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span>BLAST</span></button>
+      <button id="bUlt" aria-label="Nightmare Breaker"><svg viewBox="0 0 24 24"><path d="M12 2a8 8 0 0 0-8 8c0 3 1.5 5 3 6v3h10v-3c1.5-1 3-3 3-6a8 8 0 0 0-8-8zm-3 9a1.6 1.6 0 1 1 0 3.2A1.6 1.6 0 0 1 9 11zm6 0a1.6 1.6 0 1 1 0 3.2 1.6 1.6 0 0 1 0-3.2zm-3 4 1 2h-2z"/><path d="M9 21h6" stroke="currentColor" stroke-width="2"/></svg><span>BREAKER</span><i id="ultfill"></i></button>
+    </div>
+  </div>
+  <div id="letterbox"><i></i><i></i></div>
+  <div id="flash"></div>
+  <div id="tear"></div>
+  <div id="fade"></div>
+  <div id="ov" class="hidden"></div>
+
+  <div id="tools">
+    <h4>SCENES</h4>
+    <div id="scenes"></div>
+    <h4>HUD</h4>
+    <div id="hudbtns"></div>
+    <h4>FX</h4>
+    <div id="fxbtns"></div>
+    <h4>LOG</h4>
+    <pre id="log" style="white-space:pre-wrap;color:#9f9"></pre>
+  </div>
+  <button id="tab">TOOLS</button>
+</div>
+
+<script type="module">
+import { hud } from '../src/ui/hud.js';
+import { panels } from '../src/ui/panels.js';
+import { fxdom } from '../src/ui/fxdom.js';
+import { COPY } from '../src/game/data/copy.js';
+
+const q = new URLSearchParams(location.search);
+const scene = q.get('scene');
+if (q.get('safe') !== '0') document.documentElement.classList.add('safe');
+if (q.get('guides') === '0') document.documentElement.classList.add('noguides');
+const log = (...a) => { const l = document.getElementById('log'); l.textContent = a.join(' ') + '\n' + l.textContent.slice(0, 600); console.log('[ui]', ...a); };
+const cb = (a, v) => log('cb:', a, v ?? '');
+const SETTINGS = { autoBlast: true, look: 1, lefty: false, shake: 1, quality: 'auto', difficulty: 'brave' };
+
+fxdom.init(); fxdom.cut(0); hud.init();
+window.hud = hud; window.panels = panels; window.fxdom = fxdom; window.COPY = COPY;
+
+// ---------- scenes ----------
+const W = { x: () => innerWidth / 2, y: () => innerHeight / 2 };
+const SCENES = {
+  title() { hud.hide(); panels.title(cb, { settings: SETTINGS }); },
+  'title-diff'() { hud.hide(); panels.title(cb, { settings: { ...SETTINGS, difficulty: null } }); },
+  map() { hud.hide(); panels.map({ slain: { forest: true }, secrets: { tree: true, console: false } }, cb); },
+  pause() { hudBusy(false); panels.pause(cb, SETTINGS); },
+  wake() { hud.hide(); panels.wake(cb, COPY.wake.lines[0]); },
+  cleared() { hud.hide(); panels.cleared({ world: 'forest', kills: 47, headshots: 12, streak: 9, time: 254, secret: true }, cb); },
+  victory() { hud.hide(); panels.victory(cb); },
+  settings() { hud.hide(); panels.settings(cb, SETTINGS); },
+  boss() { hudBusy(false); hud.hideUI(true); fxdom.letterbox(true); panels.bossCard(COPY.bosses.hollowstag.name, COPY.bosses.hollowstag.title, COPY.bosses.hollowstag.quote, (i, c) => log('letter', i, c)).then(() => { log('boss card done'); fxdom.letterbox(false); hud.hideUI(false); }); },
+  cold() { hud.hide(); panels.coldOpen(COPY.coldOpen, how => log('cold open', how)); },
+  hud() { hudBusy(true); },
+  dir() { SCENES.calm(); hud.setHP(60, 100, true); hud.damageDir(0); hud.damageDir(Math.PI * 0.75); },
+  lefty() { hudBusy(false); hud.lefty(true); },
+  calm() { panels.hide(); hud.reset(); hud.show(); hud.setWorld(COPY.worlds.forest.name, 'SURVIVE'); hud.setTouchVisible(true); hud.ghost(COPY.ghost.move); },
+};
+function hudBusy(fx) {
+  panels.hide(); hud.reset(); hud.show(); hud.setTouchVisible(true); hud.hideUI(false);
+  hud.setWorld(COPY.worlds.forest.name, 'WAVE 3 — ' + COPY.worlds.forest.wave3);
+  hud.setHP(35, 100, fx); hud.low(true); hud.setKills(23); hud.setStreak(5, 0.62); hud.setUlt(1); hud.setDash(1, 2);
+  hud.boss(COPY.bosses.hollowstag.name, COPY.bosses.hollowstag.title); hud.bossHP(0.55, fx);
+  hud.reticle('lock');
+  hud.killfeed(COPY.feed.stalker[0]); hud.killfeed(COPY.feed.crawler[0]); hud.killfeed(COPY.feed.stalker[1]);
+  hud.ghost(COPY.ghost.ult);
+  if (fx) {
+    hud.hitmarker('kill'); hud.damageDir(0.8);
+    hud.damageNumber(W.x() + 40, W.y() - 30, '18', 'weak'); hud.damageNumber(W.x() + 70, W.y() - 10, '12'); hud.damageNumber(W.x() - 60, W.y() + 20, '12'); hud.damageNumber(W.x() + 20, W.y() + 50, '32', 'crit');
+    hud.banner(COPY.banners.wave2, 'normal'); hud.stamp(COPY.stamps.headshot, 'gold');
+  }
+}
+window.SCENES = SCENES;
+
+// ---------- buttons ----------
+const mk = (root, list) => { for (const [name, fn] of list) { const b = document.createElement('button'); b.textContent = name; b.onclick = fn; document.getElementById(root).appendChild(b); } };
+mk('scenes', Object.entries(SCENES).concat([['hide panels', () => panels.hide()]]));
+mk('hudbtns', [
+  ['show', () => hud.show()], ['hide', () => hud.hide()], ['reset', () => hud.reset()],
+  ['hp 100', () => { hud.setHP(100, 100); hud.low(false); }], ['hp 60 hurt', () => hud.setHP(60, 100, true)], ['hp 35 hurt+low', () => { hud.setHP(35, 100, true); hud.low(true); }], ['hp 0', () => hud.setHP(0, 100, true)],
+  ['kills+', () => hud.setKills(((+document.getElementById('kills').textContent) || 0) + 1)],
+  ['streak ×2', () => hud.setStreak(2, 1)], ['streak ×5 .3', () => hud.setStreak(5, 0.3)], ['streak shatter', () => hud.setStreak(5, 0, true)], ['streak off', () => hud.setStreak(1, 1)],
+  ['ult 0', () => hud.setUlt(0)], ['ult .6', () => hud.setUlt(0.6)], ['ult ready', () => hud.setUlt(1)],
+  ['dash 2/2', () => hud.setDash(2, 2)], ['dash 1/2', () => hud.setDash(1, 2)], ['dash 0/2', () => hud.setDash(0, 2)],
+  ['reticle free', () => hud.reticle('free')], ['reticle lock', () => hud.reticle('lock')], ['reticle weak', () => hud.reticle('weak')], ['reticle off', () => hud.reticle('off')],
+  ['hit body', () => hud.hitmarker('body')], ['hit weak', () => hud.hitmarker('weak')], ['hit kill', () => hud.hitmarker('kill')],
+  ['dmg 12', () => hud.damageNumber(W.x() + 30, W.y() - 20, '12')], ['dmg weak', () => hud.damageNumber(W.x() + 30, W.y() - 20, '18', 'weak')], ['dmg crit', () => hud.damageNumber(W.x() + 30, W.y() - 20, '32', 'crit')], ['dmg ×20', () => { for (let i = 0; i < 20; i++) hud.damageNumber(W.x() + (Math.random() * 200 - 100), W.y() + (Math.random() * 120 - 60), String(8 + i)); }],
+  ['dir front', () => hud.damageDir(0)], ['dir right', () => hud.damageDir(Math.PI / 2)], ['dir back', () => hud.damageDir(Math.PI)], ['dir left', () => hud.damageDir(-Math.PI / 2)],
+  ['banner big', () => hud.banner(COPY.banners.start, 'big')], ['banner', () => hud.banner(COPY.banners.wave2, 'normal')], ['banner small', () => hud.banner(COPY.banners.clear, 'small')], ['banner wave3', () => hud.banner(COPY.worlds.forest.wave3)],
+  ['stamp gold', () => hud.stamp(COPY.stamps.headshot, 'gold')], ['stamp red', () => hud.stamp(COPY.multikill[4], 'red')], ['stamp cyan', () => hud.stamp(COPY.stamps.dodge, 'cyan')], ['stamp white', () => hud.stamp(COPY.stamps.streakBreak, 'white')],
+  ['feed', () => { const k = Object.keys(COPY.feed); const l = COPY.feed[k[(Math.random() * k.length) | 0]]; hud.killfeed(l[(Math.random() * l.length) | 0]); }],
+  ['pickup', () => hud.pickup(COPY.pickups.overcharge)],
+  ['ghost on', () => hud.ghost(COPY.ghost.blast)], ['ghost off', () => hud.ghost(null)],
+  ['boss on', () => hud.boss(COPY.bosses.rotking.name, COPY.bosses.rotking.title)], ['boss hit', () => hud.bossHP(Math.random(), true)], ['boss 30%', () => hud.bossHP(0.3, true)], ['boss off', () => hud.boss(null)],
+  ['low on', () => hud.low(true)], ['low off', () => hud.low(false)],
+  ['touch on', () => hud.setTouchVisible(true)], ['touch off', () => hud.setTouchVisible(false)], ['lefty on', () => hud.lefty(true)], ['lefty off', () => hud.lefty(false)],
+  ['world', () => hud.setWorld(COPY.worlds.sea.name, 'FIND THE SUNKEN CONSOLE')], ['hideUI', () => hud.hideUI(!document.getElementById('hud').classList.contains('hideui'))],
+]);
+mk('fxbtns', [
+  ['flash white', () => fxdom.flash(0.7, 160)], ['flash red', () => fxdom.flash(0.5, 300, '#ff2438')], ['flash cyan', () => fxdom.flash(0.6, 400, '#4de3ff')],
+  ['tear', () => fxdom.tear()], ['fade out', () => fxdom.fade(1, 600).then(() => log('faded'))], ['fade in', () => fxdom.fade(0, 600)],
+  ['letterbox on', () => fxdom.letterbox(true)], ['letterbox off', () => fxdom.letterbox(false)],
+]);
+document.getElementById('tab').onclick = () => document.getElementById('tools').classList.toggle('open');
+
+if (scene && SCENES[scene]) { SCENES[scene](); document.getElementById('tab').classList.add('hidden'); }
+else { document.getElementById('tools').classList.add('open'); SCENES.calm(); }
+window.__ready = true;
+</script>
+</body>
+</html>
