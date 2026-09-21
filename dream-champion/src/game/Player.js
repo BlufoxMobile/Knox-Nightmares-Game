@@ -19,7 +19,11 @@ export class Player {
     this.ult = 0; this.ultActive = 0; this.combo = 1; this.comboT = 0; this.kills = 0; this.headshots = 0; this.bestStreak = 1;
     this.roll = { t: -1, dirx: 0, dirz: 0, charges: ROLL.charges, refill: 0, buffered: false, perfect: false };
     this.fireCd = 0; this.aimW = 0; this.aimT = 0; this.combatT = 0; this.chargeT = 0; this.charging = false; this.locked = null; this.lockT = 0; this.tapLock = 0;
-    this.cam = { yaw: Math.PI, pitch: -0.10, dist: 3.6, targetDist: 3.6, fov: 46, pos: new THREE.Vector3(), lookAt: new THREE.Vector3(), shoulder: 0.55, side: 1, autoT: 0, sway: 0 };
+    this.cam = { yaw: Math.PI, pitch: -0.17, dist: 5.0, targetDist: 5.0, fov: 50, pos: new THREE.Vector3(), lookAt: new THREE.Vector3(), shoulder: 0.55, side: 1, autoT: 0, sway: 0, fovKick: 0 };   // fovKick MUST start at 0: undefined made the fov expression NaN, so the camera silently kept whatever fov the title/cine camera left behind (38deg) until the first shot
+    // Heading latch (see fixedUpdate): while the stick is held, the world direction Knox travels is pinned to the
+    // camera yaw from the moment of the push, so the auto-follow can swing the camera without rotating the map
+    // under the player's thumb. base = the camera yaw frozen at the moment of the push.
+    this.moveRef = { on: false, base: 0 };
     this.shakeT = 0; this.trauma = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
     this.ammoKey = 'starfire'; this.ammo = AMMO.starfire; this.swim = false; this.bob = 0; this.footT = 0; this.lampOn = true;
     this.root = new THREE.Group(); ctx.scene.add(this.root); this.visible = true;
@@ -47,7 +51,7 @@ export class Player {
   setWorld(theme) {
     this.swim = !!theme.underwater; this.ammoKey = theme.ammo; this.ammo = AMMO[theme.ammo]; this.gear.blaster.glowMat.emissive.set(this.ammo.color); this.gear.blaster.glowMat.color.set(this.ammo.color);
     this.hp = this.maxhp; this.ult = 0; this.combo = 1; this.comboT = 0; this.alive = true; this.dead = false; this.roll.charges = ROLL.charges; this.iframes = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
-    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.10; this.cam.init = false; this.locked = null;
+    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.locked = null; this.moveRef.on = false;
     this.anim.stopAll(); this.anim.play(this.swim ? 'swim_idle' : 'combat_idle', 0); this.root.visible = true; this.combatT = 0;
     this.y = this.swim ? 0.35 : 0;
   }
@@ -64,11 +68,23 @@ export class Player {
     const look = g.save.data.settings.look || 1; const yawIn = inp.ldx * 0.0028 * look, pitchIn = inp.ldy * 0.0022 * look;
     const friction = this.locked ? (this.lockAng < 3 * Math.PI / 180 ? 0.4 : this.lockAng < 6 * Math.PI / 180 ? 0.55 : 1) : 1;
     this.cam.yaw -= yawIn * friction; this.cam.pitch = clamp(this.cam.pitch - pitchIn * friction, this.swim ? -1.1 : -0.95, this.swim ? 0.9 : 0.42);
+    // A camera turn the PLAYER asked for re-bases the heading latch, so dragging to look also steers where Knox
+    // runs. A camera turn the auto-follow made must NOT, which is the whole reason the follow can't spin now.
+    if (this.moveRef.on) this.moveRef.base -= yawIn * friction;
     const looking = Math.abs(inp.ldx) + Math.abs(inp.ldy) > 0.5; if (looking) this.cam.autoT = 0.5; else this.cam.autoT -= step;
-    // movement (camera relative)
-    const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy); const rx = -Math.cos(cy), rz = Math.sin(cy);
-    let mx = inp.mx, my = inp.my; const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
-    const wantX = fx * my + rx * mx, wantZ = fz * my + rz * mx; const moving = ml > 0.05;
+    // Movement. Camera-relative at the instant the stick is pushed, then LATCHED: while it is held, the stick
+    // angle maps to a fixed world heading. Pure camera-relative control plus a camera that follows travel is a
+    // positive feedback loop by construction -- "right" is always camYaw-90deg, so the camera chases its own tail
+    // (measured -2.85 rad/s before) and after half a turn left is right. Latching breaks the loop at the source:
+    // the heading simply doesn't care where the camera has swung to. Re-centring the stick re-arms the latch, so
+    // push-release-push always means "go that way on screen".
+    let mx = inp.mx, my = inp.my; let ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; ml = 1; }
+    const moving = ml > 0.05; const M = this.moveRef;
+    if (!moving) M.on = false; else if (!M.on) { M.on = true; M.base = this.cam.yaw; }
+    // exactly the old camera-relative mapping, but against the FROZEN yaw rather than the live one
+    const by = M.on ? M.base : this.cam.yaw;
+    const fx = Math.sin(by), fz = Math.cos(by), rx = -Math.cos(by), rz = Math.sin(by);
+    const wantX = fx * my + rx * mx, wantZ = fz * my + rz * mx;
     const maxSp = (this.swim ? 5.6 : 6.4) * (this.buffs.quick > 0 ? 1.15 : 1);
     // roll
     const R = this.roll;
@@ -99,9 +115,9 @@ export class Player {
     this.faceYaw = dampAng(this.faceYaw, targetYaw, this.locked ? 22 : 14, step);
     // firing
     let autoOk = false;
-    // 42deg = half the horizontal FOV on a phone: auto-blast anything ON SCREEN when it is close, but never
+    // 45deg = half the horizontal FOV on a phone at the 50deg vertical FOV: auto-blast anything ON SCREEN when it is close, but never
     // shoot at something the player cannot see (50deg was outside the frame edge).
-    if (this.locked) { const ld = Math.hypot(this.locked.x - this.x, this.locked.z - this.z); autoOk = ld < 8 ? this.lockAng < 42 * Math.PI / 180 : (ld < 16 && this.lockAng < 20 * Math.PI / 180); }
+    if (this.locked) { const ld = Math.hypot(this.locked.x - this.x, this.locked.z - this.z); autoOk = ld < 8 ? this.lockAng < 45 * Math.PI / 180 : (ld < 16 && this.lockAng < 20 * Math.PI / 180); }
     const fireHeld = (inp.fire && !this.charging) || (g.autoBlast && (autoOk || this.tapLock > 0) && this.lockT > 0.12 && !inp.fire && !this.charging);
     // charge shot: hold fire with nothing locked (or double-tap via dashQ? no) — releasing fires the charged shot
     if (inp.fire && inp.fireHold >= 0.6 && !this.charging && this.ammo.charge && !this.locked) { this.charging = true; this.chargeT = 0; g.audio.play('sfx_charge', { vol: 0.6 }); }
@@ -110,17 +126,17 @@ export class Player {
     if (inp.ult && this.ult >= 100) g.breaker(this);
     this.combatT = enemies.some(e => e.alive) ? 3 : Math.max(0, this.combatT - step);
     // camera follow (fixed for determinism, smoothed in update)
-    // Auto-follow. The old target was the raw travel angle, which is positive feedback under camera-relative
-    // control: "right" is always camYaw-90deg, so holding right rotated the camera forever (measured -2.85 rad/s,
-    // a full circle in 2.2 s). Adding the stick's own angle makes the fixed point the CURRENT yaw: the camera only
-    // turns when Knox is actually travelling somewhere other than where the stick points (roll, knockback, slide).
-    if (this.cam.autoT <= 0 && moving && !this.locked && this.speedN > 0.2) {
-      const ty = Math.atan2(this.vx, this.vz) + Math.atan2(mx, my);
-      this.cam.yaw += clamp(angDiff(this.cam.yaw, ty) * 1.8, -0.9, 0.9) * step;
+    // Auto-follow: swing round behind where Knox is actually travelling, so the camera shows what he faces and
+    // running away from the camera turns the view around with him. Safe now only because the heading is latched
+    // above -- the target is a fixed world angle, so this converges and stops instead of chasing itself.
+    if (this.cam.autoT <= 0 && !this.locked && this.speedN > 0.22) {
+      const ty = Math.atan2(this.vx, this.vz);
+      this.cam.yaw += clamp(angDiff(this.cam.yaw, ty) * 2.4, -2.8, 2.8) * step;
     }
-    // pull the camera onto the locked enemy — but never spin the player 180deg for something behind them
-    if (this.locked && !looking && this.lockAng < 1.6) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 0.3 * step * 3, -1.05 * step, 1.05 * step); }
-    this.cam.targetDist = (g.bossActive ? 4.3 : 3.6) - (aiming ? 0.5 : 0) + (this.swim ? 0.6 : 0);
+    // Pull the camera onto the locked enemy. The old 1.6 rad gate meant anything behind Knox was never brought
+    // into view, which is exactly the zombie-behind-you case; allow up to 150deg and let it come round.
+    if (this.locked && !looking && this.lockAng < 2.6) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 1.6, -1.9, 1.9) * step; }
+    this.cam.targetDist = (g.bossActive ? 6.0 : 5.0) - (aiming ? 0.7 : 0) + (this.swim ? 0.8 : 0);
     // shield/overcharge visuals
     if (this.buffs.shield > 0 && Math.random() < 0.3) this.ctx.particlesAdd.one(this.x + rnd(-.5, .5), this.y + rnd(0.2, 1.6), this.z + rnd(-.5, .5), { type: P.DOT, color: new THREE.Color(0xffcf4a), life: 0.5, size: 0.15, sizeEnd: 0, vx: 0, vy: 0.4, vz: 0 });
   }
@@ -263,7 +279,7 @@ export class Player {
     c.lookAt.set(px + fx * 4 + rx * c.side * 0.6, py + fy * 4, pz + fz * 4 + rz * c.side * 0.6); cam.lookAt(c.lookAt);
     cam.rotateZ(n2 * 0.045 * sh); if (this.recoil > 0) { cam.rotateX(this.recoil * 0.01); this.recoil = Math.max(0, this.recoil - dt * 30); }
     if (c.fovKick > 0) { c.fovKick = Math.max(0, c.fovKick - dt * 4); }
-    const fov = (this.aimW > 0.5 ? 42 : 46) + c.fovKick * 8 + (this.buffs.quick > 0 ? 3 : 0); if (Math.abs(cam.fov - fov) > 0.05) { cam.fov = damp(cam.fov, fov, 10, dt); cam.updateProjectionMatrix(); }
+    const fov = (this.aimW > 0.5 ? 46 : 50) + c.fovKick * 8 + (this.buffs.quick > 0 ? 3 : 0); if (Math.abs(cam.fov - fov) > 0.05) { cam.fov = damp(cam.fov, fov, 10, dt); cam.updateProjectionMatrix(); }
   }
   dispose() { this.gear.dispose(); this.ctx.scene.remove(this.root); }
 }
