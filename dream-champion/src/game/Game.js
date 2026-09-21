@@ -142,7 +142,8 @@ export class Game {
     this.state = 'play'; this.input.reset(); fxdom.fade(0, 900); this.director.startLevel(); this.input.lockMouse(); this.wake(true); this.renderer.dyn.settle && this.renderer.dyn.settle(3);
     const next = WORLD_ORDER[WORLD_ORDER.indexOf(key) + 1];
     for (const k of WORLD_ORDER) if (k !== key && k !== next) this.assets.releaseGroup(k);
-    this.assets.prefetch('home'); if (next) this.after(8, () => this.assets.prefetch(next), 'wave');
+    this.assets.prefetch('home'); this.assets.prefetch('wake');   // the wake film should be warm before he needs it, not fetched at the moment he dies
+    if (next) this.after(8, () => this.assets.prefetch(next), 'wave');
     if (isTouchDevice() && !save.data.settings.seenTut[key]) { this.tutorial = ['move', 'look', 'blast', 'dash']; this.tutT = 1.5; } else if (!isTouchDevice() && !save.data.settings.seenTut.kb) { hud.ghost(COPY.ghost.kb); setTimeout(() => hud.ghost(null), 7000); save.data.settings.seenTut.kb = true; save.write(); }
   }
   pause() { if (this.state !== 'play' || this.paused) return; this.paused = true; this.loop.timeScale = 0; this.input.reset(); this.input.unlockMouse(); hud.hideUI(true); this.audio.musicDuck(0.3, 999); panels.pause(a => { if (a === 'resume') this.resume(); else if (a === 'quit') { this.resume(true); this.map(); } else this.applySetting(a); }, save.data.settings); }
@@ -303,6 +304,16 @@ export class Game {
     this.state = 'wake'; this.input.reset(); this.input.unlockMouse(); this.loop.slowMo(0.3, 1.2); hud.hideUI(true); this.audio.setMusicMix({ bed: 0.3 }, 1); this.audio.play('sfx_gasp', { vol: 1, delay: 0.9 }); save.data.stats.wakes++; save.write();
     this.after(0.9, () => { fxdom.tear(); fxdom.cut(1); }, 'down');
     this.after(1.3, async () => {
+      // Losing a level is the emotional beat this whole game is built around, so it gets the filmed version:
+      // Knox jolts awake in his parents' room, wipes his forehead and settles back down safe between them.
+      // The in-engine bedroom below stays as the fallback -- if the video is missing or the browser refuses
+      // to play it, show that rather than a black screen.
+      const wv = this.assets.manifest.groups.wake?.find(a => a.type === 'video');
+      if (wv) {
+        let ok = false;
+        try { ok = await this.playVideo(this.assets.url(wv.url)); } catch (_) { ok = false; }
+        if (ok) { this.cine = null; fxdom.cut(0); panels.wake(a => this.onWake(a), pick(COPY.wake.lines)); return; }
+      }
       // bedroom scene: Knox sits up in bed
       await this.assets.loadGroup('home'); const W = WORLDS.home; const keep = this.world; this.homeEnv = W.build(this.ctx, this.renderer.tier); this.scene.add(this.homeEnv.group); keep.env.group.visible = false; this.director.enemies.forEach(e => e.root.visible = false);
       this.sky.apply(W.THEME.sky); this.lighting.apply(W.THEME.rig); this.renderer.fx.underwater = 0; this.sky.uniforms.underwater.value = 0; this.audio.setWorldFilter(false); this.renderer.fx.hurt = 0; this.renderer.fx.desat = 0; this.bloodT = 0; p.hurtT = 0; hud.low(false);
@@ -349,5 +360,5 @@ export class Game {
   }
   finalCard() { hud.hide(); panels.victory(a => { if (a === 'reset') { save.data.slain = {}; save.write(); this.state = 'map'; this.loadWorld('forest').then(() => this.title()); } else this.ending(); }); }
   primeVideo(url) { const v = document.createElement('video'); v.src = url; v.playsInline = true; v.preload = 'auto'; v.muted = false; v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:15;opacity:0'; document.getElementById('app').appendChild(v); this._primed = { v, p: v.play().catch(() => null) }; return this._primed; }
-  playVideo(url) { return new Promise(res => { const pre = this._primed; this._primed = null; const v = pre ? pre.v : document.createElement('video'); if (!pre) { v.src = url; v.playsInline = true; } v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:15'; v.muted = false; if (!pre) document.getElementById('app').appendChild(v); let done = false; const end = ok => { if (done) return; done = true; v.remove(); res(ok); }; v.onended = () => end(true); v.onerror = () => end(false); (pre ? pre.p.then(() => { if (v.paused) throw new Error('blocked'); }) : v.play()).then(() => { fxdom.cut(0); const skip = () => end(true); v.addEventListener('pointerdown', skip); }).catch(() => end(false)); }); }
+  playVideo(url) { return new Promise(res => { const pre = this._primed; this._primed = null; const v = pre ? pre.v : document.createElement('video'); if (!pre) { v.src = url; v.playsInline = true; } v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:15'; v.muted = false; if (!pre) document.getElementById('app').appendChild(v); let done = false; let wd = 0; const end = ok => { if (done) return; done = true; clearTimeout(wd); v.remove(); res(ok); }; v.onended = () => end(true); v.onerror = () => end(false); /* Watchdog: if 'ended' never arrives -- a stalled decode, a tab backgrounded mid-clip -- the player is left on a frozen frame with the game awaiting a promise that will never settle. Losing a level is exactly when that must not happen, so give up after the clip's own length plus slack. */ const arm = () => { clearTimeout(wd); const d = isFinite(v.duration) && v.duration > 0 ? v.duration : 20; wd = setTimeout(() => end(true), (d + 2) * 1000); }; v.onloadedmetadata = arm; arm(); (pre ? pre.p.then(() => { if (v.paused) throw new Error('blocked'); }) : v.play()).then(() => { fxdom.cut(0); const skip = () => end(true); v.addEventListener('pointerdown', skip); }).catch(() => end(false)); }); }
 }

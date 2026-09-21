@@ -55,6 +55,9 @@ export function build(ctx, tier) {
   const geoObelisk = merge([new THREE.CylinderGeometry(.13, .24, 1.9, 4).rotateY(Math.PI / 4).translate(0, 1.25, 0), new THREE.ConeGeometry(.13, .28, 4).rotateY(Math.PI / 4).translate(0, 2.33, 0), new THREE.BoxGeometry(.7, .3, .7).translate(0, .3, 0), plinth(.95, .95)]);
   const geoCracked = merge([ext(slabShape(.8, 1.0, true), .17).translate(0, .1, 0), new THREE.BoxGeometry(.5, .16, .34).translate(.55, .08, .35).rotateY(.6), plinth(1.0, .5)]);
   for (const g of [geoSlab, geoCross, geoObelisk, geoCracked]) { roughen(g, .012, 6, 3); D.add(g); }
+  // Drawn height per headstone kind, so the camera's occlusion sweep can see over a slab instead of
+  // yanking the lens in for something Knox is taller than.
+  const STONE_H = [1.15, 1.5, 2.5, 0.7];
   const stones = []; // {x,z,a,kind}
   for (let zr = -17; zr <= 17; zr += 3.3) for (let xr = -19; xr <= 19; xr += 2.5) {
     if (r() < 0.38) continue; const x = xr + r.range(-.7, .7), z = zr + r.range(-.5, .5); const d = Math.hypot(x, z); if (d < 3.6 || d > R + 1.5) continue;
@@ -64,7 +67,7 @@ export function build(ctx, tier) {
   const byKind = [0, 1, 2, 3].map(k => stones.filter(s => s.kind === k));
   const stoneMeshes = [geoSlab, geoCross, geoObelisk, geoCracked].map((g, k) => { const im = caster(instancer(g, stoneInstMat, Math.max(1, byKind[k].length)), SM, tier); im.name = 'graves' + k; return im; });
   { const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), col = new THREE.Color();
-    byKind.forEach((list, k) => list.forEach((s, i) => { e.set(s.tilt, s.a, s.tilt * .5); q.setFromEuler(e); m.compose(new THREE.Vector3(s.x, 0, s.z), q, new THREE.Vector3(s.s, s.s, s.s)); stoneMeshes[k].setMatrixAt(i, m); const v = r.range(.7, 1), mossy = r() < .45; col.setRGB(v * (mossy ? .8 : 1), v * (mossy ? 1 : .98), v * (mossy ? .75 : .95)); stoneMeshes[k].setColorAt(i, col); if (Math.hypot(s.x, s.z) < R) obstacles.push({ x: s.x, z: s.z, r: 0.42 * s.s }); }));
+    byKind.forEach((list, k) => list.forEach((s, i) => { e.set(s.tilt, s.a, s.tilt * .5); q.setFromEuler(e); m.compose(new THREE.Vector3(s.x, 0, s.z), q, new THREE.Vector3(s.s, s.s, s.s)); stoneMeshes[k].setMatrixAt(i, m); const v = r.range(.7, 1), mossy = r() < .45; col.setRGB(v * (mossy ? .8 : 1), v * (mossy ? 1 : .98), v * (mossy ? .75 : .95)); stoneMeshes[k].setColorAt(i, col); if (Math.hypot(s.x, s.z) < R) obstacles.push({ x: s.x, z: s.z, r: 0.42 * s.s, h: STONE_H[k] * s.s }); }));
   }
   group.add(...stoneMeshes);
 
@@ -99,7 +102,7 @@ export function build(ctx, tier) {
     for (let i = 0; i < 5; i++) S(new THREE.BoxGeometry(r.range(.6, 1.4), r.range(.4, .9), r.range(.6, 1.2)), r.range(-2, 5), .3, r.range(3.6, 5.5), r() * 3, r.range(-.3, .3), r.range(-.3, .3));
   }
   const rocks = scatter(r, lod ? 5 : 8, 5, R + 3, 4, [...avoid, ...stones.map(s => ({ ...s, r: 1.3 }))]);
-  for (const rk of rocks) { const s = r.range(.4, .9); stoneParts.push(xform(rock(r, s, lod ? 0 : 1, r() * 10), rk.x, -s * .1, rk.z, r() * TAU, 1)); if (Math.hypot(rk.x, rk.z) < R) obstacles.push({ x: rk.x, z: rk.z, r: s * .95 }); }
+  for (const rk of rocks) { const s = r.range(.4, .9); stoneParts.push(xform(rock(r, s, lod ? 0 : 1, r() * 10), rk.x, -s * .1, rk.z, r() * TAU, 1)); if (Math.hypot(rk.x, rk.z) < R) obstacles.push({ x: rk.x, z: rk.z, r: s * .95, h: s * 1.2 }); }
   const stoneMesh = caster(new THREE.Mesh(merge(stoneParts), stoneMat), SM, tier); stoneMesh.receiveShadow = true; group.add(stoneMesh); D.add(stoneMesh.geometry);
 
   // ---------- iron: fence ring, gates, lamp posts (static) ----------

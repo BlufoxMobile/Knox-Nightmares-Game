@@ -10,6 +10,13 @@ import { COPY } from './data/copy.js';
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
 const ROLL = { dur: 0.45, dist: 4.5, iStart: 0.04, iEnd: 0.30, charges: 2, refill: 1.8 };
+const _near = [];            // scratch broadphase list for the obstacle solver (no per-step allocation)
+const SKIN = 0.02;           // rest this far proud of a surface so the next step starts outside it
+// Camera occlusion: how much of a prop's own radius counts as "across the sightline" (a graze that only
+// clips his shoulder is not worth yanking the lens in for), and how close the lens may ever come. 2.4 m
+// rather than 1.5: in THE GRAVE, dropping the floor to 1.5 put the lens inside 2.4 m on 49% of frames for
+// an extra 0.2 points of visibility, which is a bad trade in a world that dense.
+const CAM_GRAZE = 0.10, CAM_MIN = 2.4;
 
 export class Player {
   constructor(ctx) {
@@ -48,7 +55,7 @@ export class Player {
   setWorld(theme) {
     this.swim = !!theme.underwater; this.ammoKey = theme.ammo; this.ammo = AMMO[theme.ammo]; this.gear.blaster.glowMat.emissive.set(this.ammo.color); this.gear.blaster.glowMat.color.set(this.ammo.color);
     this.hp = this.maxhp; this.ult = 0; this.combo = 1; this.comboT = 0; this.alive = true; this.dead = false; this.roll.charges = ROLL.charges; this.iframes = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
-    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.locked = null; this.idleT = 0;
+    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.cam.occl = undefined; this.locked = null; this.idleT = 0;
     this.anim.stopAll(); this.anim.play(this.swim ? 'swim_idle' : 'combat_idle', 0); this.root.visible = true; this.combatT = 0;
     this.y = this.swim ? 0.35 : 0;
   }
@@ -89,20 +96,67 @@ export class Player {
       const acc = moving ? 1 - Math.exp(-step / 0.065) : 1 - Math.exp(-step / 0.07);
       this.vx = lerp(this.vx, wantX * maxSp, acc); this.vz = lerp(this.vz, wantZ * maxSp, acc);
     }
-    this.x += this.vx * step; this.z += this.vz * step; this.speedN = Math.hypot(this.vx, this.vz) / maxSp;
-    // arena bounds + obstacles
-    const world = g.world; const rad = world.THEME.radius; const d = Math.hypot(this.x, this.z); if (d > rad) { this.x *= rad / d; this.z *= rad / d; }
-    if (world.env.obstacles) for (const o of world.env.obstacles) { const dx = this.x - o.x, dz = this.z - o.z; const dd = Math.hypot(dx, dz); const min = o.r + this.r; if (dd < min && dd > 1e-4) { this.x = o.x + dx / dd * min; this.z = o.z + dz / dd * min; } }
+    this.x += this.vx * step; this.z += this.vz * step;
+    // Arena bounds + props, solved as a CONSTRAINT SET rather than one pass per prop in list order. THE
+    // DROWN scatters coral only 1.6 m apart while two inflated radii can sum to 2.3 m, so neighbouring
+    // circles overlap: pushing him clear of A shoved him into B, and the step ended with him up to 0.31 m
+    // INSIDE something on 130 of 2340 measured approaches. That residue is the wedge -- the next step
+    // starts embedded and the push fires again in the other direction. The skin leaves him a hair proud of
+    // the surface so the next step starts clean.
+    // Velocity is deliberately NOT projected onto the contact plane. It is the obvious thing to add and it
+    // measurably makes sliding WORSE: the normal of a 0.6 m coral swings ~0.08 rad per step while he slides
+    // round it, so every step throws away a slice of the tangential speed the previous one earned -- in
+    // contact at 80deg off the normal it cost 13% of the slide (2.86 m/s against 3.30 m/s unprojected).
+    const world = g.world; const rad = world.THEME.radius; const obs = world.env.obstacles;
+    if (obs && obs.length) {
+      _near.length = 0;   // broadphase once: the solver then loops over 0-3 circles, not all 48
+      for (let i = 0; i < obs.length; i++) { const o = obs[i]; const reach = o.r + this.r + 1; if (Math.abs(this.x - o.x) < reach && Math.abs(this.z - o.z) < reach) _near.push(o); }
+      for (let it = 0; it < 8 && _near.length; it++) {
+        const dc = Math.hypot(this.x, this.z); if (dc > rad) { this.x *= rad / dc; this.z *= rad / dc; }
+        let worst = 0;
+        // Gauss-Seidel: apply each violated constraint against the position the previous one left, and
+        // sweep again until nothing is violated. Correcting only the deepest per sweep ping-pongs in a
+        // notch and still left 19 of 2340 approaches embedded after six sweeps.
+        for (let i = 0; i < _near.length; i++) {
+          const o = _near[i]; const dx = this.x - o.x, dz = this.z - o.z; const min = o.r + this.r + SKIN; const qq = dx * dx + dz * dz;
+          if (qq >= min * min) continue;
+          const dd = Math.sqrt(qq); const depth = min - dd; if (depth > worst) worst = depth;
+          // dead centre has no outward direction; shove him the way he is facing rather than NaN
+          const nx = dd > 1e-4 ? dx / dd : Math.sin(this.faceYaw), nz = dd > 1e-4 ? dz / dd : Math.cos(this.faceYaw);
+          this.x += nx * depth; this.z += nz * depth;
+        }
+        if (worst < SKIN * 0.25) break;
+      }
+    }
+    const dr = Math.hypot(this.x, this.z); if (dr > rad) { this.x *= rad / dr; this.z *= rad / dr; }
+    // speedN from GROUND COVERED, not from the wish. It used to read the un-collided velocity, so a Knox
+    // pinned against a coral with the stick down ran the full-speed run cycle on the spot -- which is what
+    // "stuck" looks like on screen even when he is only blocked. It now drives the blend and the footsteps
+    // off what actually happened this step.
+    this.speedN = Math.min(1.2, Math.hypot(this.x - this.px, this.z - this.pz) / step / maxSp);
     // aim / target
     this.updateLock(step, inp, enemies);
     const wantAim = inp.fire || (this.locked && g.autoBlast) || this.charging; this.aimT = wantAim ? 0.35 : Math.max(0, this.aimT - step);
     const aiming = this.aimT > 0 && R.t < 0; this.aimW = damp(this.aimW, aiming ? 1 : 0, aiming ? 14 : 5, step);
     // facing: toward target when aiming, else move direction, else camera
+    //
+    // A lock used to pin his body at the enemy unconditionally, which is right while he is shooting and is
+    // moon-walking the rest of the time: measured, locked onto a stalker 6 m ahead and pushing the stick
+    // straight back, he covered 9.24 m in 1.5 s with his body a full 180deg off his travel direction --
+    // "the character will just back up but not actually turn around" in the player's words. So the lock
+    // gives his body back once he is CLEARLY running away (>110deg off the bearing) and is not asking to
+    // shoot. Auto-blast cannot be the test here: with it on, aimT is high the whole time a lock exists.
     let targetYaw = this.faceYaw;
-    if (this.locked) { targetYaw = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); }
-    else if (aiming) targetYaw = this.cam.yaw; else if (moving) targetYaw = Math.atan2(this.vx, this.vz); else if (R.t >= 0) targetYaw = Math.atan2(R.dirx, R.dirz);
+    const shooting = inp.fire || this.charging;
+    let flee = false;
+    if (this.locked && moving && !shooting) {
+      const bx = this.locked.x - this.x, bz = this.locked.z - this.z; const bl = Math.hypot(bx, bz);
+      if (bl > 1e-3) flee = (wantX * bx + wantZ * bz) / (bl * ml) < -0.34;
+    }
+    if (this.locked && !flee) { targetYaw = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); }
+    else if (aiming && !flee) targetYaw = this.cam.yaw; else if (moving) targetYaw = Math.atan2(this.vx, this.vz); else if (R.t >= 0) targetYaw = Math.atan2(R.dirx, R.dirz);
     if (R.t >= 0 && !this.locked) targetYaw = Math.atan2(R.dirx, R.dirz);
-    this.faceYaw = dampAng(this.faceYaw, targetYaw, this.locked ? 22 : 14, step);
+    this.faceYaw = dampAng(this.faceYaw, targetYaw, this.locked && !flee ? 22 : 14, step);
     // firing
     let autoOk = false;
     // 45deg = half the horizontal FOV on a phone at the 50deg vertical FOV: auto-blast anything ON SCREEN when it is close, but never
@@ -138,7 +192,11 @@ export class Player {
     }
     // Pull the camera onto the locked enemy. The old 1.6 rad gate meant anything behind Knox was never brought
     // into view, which is exactly the zombie-behind-you case; allow up to 150deg and let it come round.
-    if (this.locked && !looking && this.lockAng < 2.6) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 1.6, -1.9, 1.9) * step; }
+    // ...and while he is fleeing the lens goes with him rather than being dragged back onto what he is
+    // running from -- otherwise his body turns to face his escape and the camera immediately looks away
+    // from it again. This cannot run away with itself: the pull's target is a WORLD bearing, and rotating
+    // the camera toward it rotates his live heading by the same amount, so the flee angle only ever shrinks.
+    if (this.locked && !looking && !flee && this.lockAng < 2.6) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 1.6, -1.9, 1.9) * step; }
     this.cam.targetDist = (g.bossActive ? 6.0 : 5.0) - (aiming ? 0.7 : 0) + (this.swim ? 0.8 : 0);
     // shield/overcharge visuals
     if (this.buffs.shield > 0 && Math.random() < 0.3) this.ctx.particlesAdd.one(this.x + rnd(-.5, .5), this.y + rnd(0.2, 1.6), this.z + rnd(-.5, .5), { type: P.DOT, color: new THREE.Color(0xffcf4a), life: 0.5, size: 0.15, sizeEnd: 0, vx: 0, vy: 0.4, vz: 0 });
@@ -266,11 +324,45 @@ export class Player {
     const shoulder = this.locked ? c.shoulder * (Math.sin(angDiff(c.yaw, Math.atan2(this.locked.x - this.x, this.locked.z - this.z))) > 0.5 ? -1 : 1) : c.shoulder; c.side = damp(c.side, shoulder, 6, dt);
     const px = this.root.position.x, pz = this.root.position.z, py = this.y + 1.12;
     const fx = Math.sin(c.yaw) * Math.cos(c.pitch), fy = Math.sin(c.pitch), fz = Math.cos(c.yaw) * Math.cos(c.pitch); const rx = Math.cos(c.yaw), rz = -Math.sin(c.yaw);
-    let cx = px - fx * c.dist + rx * c.side, cy = py - fy * c.dist + 0.1, cz = pz - fz * c.dist + rz * c.side;
+    // Occlusion. The old test only shoved the lens OUT of a prop it was already inside, which still left
+    // the prop BETWEEN Knox and the lens: over 312 position/yaw samples in THE DROWN he was partly hidden
+    // on 12.2% and completely hidden on 3.5%. Props are upright, so sweeping the horizontal segment from
+    // Knox out to the lens against the world's blocker circles is exact enough and costs one pass over
+    // ~130 circles -- no scene raycast. camBlockers exists because half the coral in THE DROWN is
+    // drawn but deliberately walk-through, so obstacles alone does not know about the tubes he vanishes
+    // behind. h is the prop's drawn height, so a stump the sightline passes over is skipped.
+    const env = g.world && g.world.env; const blk = env && (env.camBlockers || env.obstacles);
+    let want = c.dist;
+    if (blk && blk.length) {
+      const cp = Math.max(0.1, Math.cos(c.pitch)); const hFull = Math.max(1e-3, c.dist * cp);
+      const camY0 = Math.max(0.35, py - fy * c.dist + 0.1);
+      // Sight from his HIPS, not his chest: a waist-high coral clears the chest line and still swallows
+      // half of him. Below the hips is shins, and pulling the lens in for shins would make the field jumpy.
+      const oy = py - 0.32;
+      const hx = -Math.sin(c.yaw), hz = -Math.cos(c.yaw); const ox = px + rx * c.side, oz = pz + rz * c.side;
+      let hmax = hFull;
+      for (let i = 0; i < blk.length; i++) {
+        const o = blk[i]; const ex = ox - o.x, ez = oz - o.z; const rr = o.r + CAM_GRAZE;
+        const bb = ex * hx + ez * hz, cc = ex * ex + ez * ez - rr * rr; const disc = bb * bb - cc;
+        if (disc <= 0) continue;
+        const sq = Math.sqrt(disc); if (-bb + sq <= 0) continue;   // wholly behind Knox
+        const t0 = Math.max(0, -bb - sq); if (t0 >= hmax) continue;
+        if (o.h !== undefined && o.h < oy + (camY0 - oy) * (t0 / hFull)) continue;
+        hmax = t0;
+      }
+      want = Math.max(CAM_MIN, hmax / cp);
+    }
+    // Snap IN the instant something intervenes (a slow pull-in still hides him for the duration of the
+    // ease), but crawl back out so clearing a prop is not a lurch.
+    c.occl = c.occl === undefined || want < c.occl ? want : damp(c.occl, want, 3.5, dt);
+    const dist = c.occl;
+    let cx = px - fx * dist + rx * c.side, cy = py - fy * dist + 0.1, cz = pz - fz * dist + rz * c.side;
     // keep camera above ground & inside arena dressing
     if (cy < 0.35) cy = 0.35;
-    // camera collision with obstacles (cheap): push camera toward player if inside an obstacle circle
-    const env = g.world && g.world.env; if (env && env.obstacles) for (const o of env.obstacles) { const dx = cx - o.x, dz = cz - o.z; const d = Math.hypot(dx, dz); if (d < o.r + 0.3 && d > 1e-3) { cx = o.x + dx / d * (o.r + 0.3); cz = o.z + dz / d * (o.r + 0.3); } }
+    // last-resort push-out: the sweep can still leave the lens inside a circle whose entry it started past
+    if (blk) for (const o of blk) { const dx = cx - o.x, dz = cz - o.z; const d = Math.hypot(dx, dz); if (d < o.r + 0.3 && d > 1e-3 && (o.h === undefined || o.h > cy)) { cx = o.x + dx / d * (o.r + 0.3); cz = o.z + dz / d * (o.r + 0.3); } }
+    // ...and that push-out is free to shove it INTO Knox, so re-seat it at the minimum stand-off after
+    { const dx = cx - px, dz = cz - pz; const dh = Math.hypot(dx, dz); if (dh < CAM_MIN) { const k2 = dh > 1e-3 ? CAM_MIN / dh : 0; cx = dh > 1e-3 ? px + dx * k2 : px - fx * CAM_MIN; cz = dh > 1e-3 ? pz + dz * k2 : pz - fz * CAM_MIN; } }
     const k = 1 - Math.exp(-dt / 0.12), kv = 1 - Math.exp(-dt / 0.2);
     if (!c.init) { c.pos.set(cx, cy, cz); c.init = true; }
     c.pos.x = lerp(c.pos.x, cx, k); c.pos.z = lerp(c.pos.z, cz, k); c.pos.y = lerp(c.pos.y, cy, kv);

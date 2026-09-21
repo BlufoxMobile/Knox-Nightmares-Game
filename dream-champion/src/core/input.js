@@ -21,9 +21,15 @@ export class Input {
     // Floating stick geometry + response. Tuned for a kid's thumb on a phone: short travel to full speed,
     // linear (not expo) curve, full tilt reached at 78% of the ring so the rim is never a requirement.
     this.stickR = 46; this.dead = 0.08; this.curve = 1.0; this.fullAt = 0.78;
-    this.lookScaleX = 1.6; this.lookScaleY = 1.15; // touch-only look gain (mouse/gamepad unchanged)
+    // Touch-only look gain (mouse/gamepad unchanged). 2.0, not 1.6: a right thumb starts its sweep on or
+    // beside BLAST (x~782 of 852) and can only reach the midline, so the usable stroke is ~356 px. At 1.6
+    // that bought 91deg -- under a quarter turn, so glancing over his shoulder always cost two sweeps. At
+    // 2.0 the same stroke covers 114deg, and the LOOK SPEED setting still scales it 0.7x / 1x / 1.4x.
+    this.lookScaleX = 2.0; this.lookScaleY = 1.15;
     this.tapSlop = 8; this.tapMax = 22; this.tapMs = 320; // camera ignores the first tapSlop px; a touch still
                                                    // counts as a tap-to-target while it drifts under tapMax
+    this.btnSlop = 20;                             // px a finger may wander on an action button before the
+                                                   // press is undone and the finger becomes a look-drag
     this.dashBuf = 220;                            // ms of dash-press buffering (was 150)
     this.enabled = true;
     this.lefty = !!save.data.settings.lefty;
@@ -37,24 +43,35 @@ export class Input {
   }
   _bind() {
     const app = this.app;
-    const btn = (id, down, up) => {
-      const el = $(id); let pid = -1;
+    const btn = (id, down, up, undo) => {
+      const el = $(id); let pid = -1, ox = 0, oy = 0;
+      const rel = e => { if (e && e.pointerId != null && pid !== -1 && e.pointerId !== pid) return; if (!el.classList.contains('down')) return; pid = -1; el.classList.remove('down'); up && up(e); };
       el.addEventListener('pointerdown', e => {
         e.preventDefault(); e.stopPropagation();
-        pid = e.pointerId; el.classList.add('down'); this.touchActive = e.pointerType !== 'mouse';
+        pid = e.pointerId; ox = e.clientX; oy = e.clientY; el.classList.add('down'); this.touchActive = e.pointerType !== 'mouse';
         down(e); this.anyQ = true;                                   // act FIRST: a capture failure must never eat a press
         try { el.setPointerCapture(e.pointerId); } catch (_) { }     // throws (NotFoundError) on some iOS pointer states
       });
-      const rel = e => { if (e && e.pointerId != null && pid !== -1 && e.pointerId !== pid) return; if (!el.classList.contains('down')) return; pid = -1; el.classList.remove('down'); up && up(e); };
+      // A finger that lands on a button and then SWEEPS is asking to turn, not to press. The right thumb
+      // lives on BLAST, so until now the only hand free to steer was the one already holding the stick --
+      // which is exactly why turning meant letting go of the stick first. Past btnSlop the press is undone
+      // and the SAME finger is handed to the look system from where it is now, so the camera does not jump.
+      el.addEventListener('pointermove', e => {
+        if (pid === -1 || e.pointerId !== pid || e.pointerType === 'mouse') return;
+        if (Math.hypot(e.clientX - ox, e.clientY - oy) <= this.btnSlop) return;
+        rel(e); undo && undo(); this._adoptLook(e);
+      });
       el.addEventListener('pointerup', rel); el.addEventListener('pointercancel', rel); el.addEventListener('lostpointercapture', rel);
       // failsafe: if capture was refused the release lands on some other element — never leave a button stuck on
       addEventListener('pointerup', e => { if (pid !== -1 && e.pointerId === pid) rel(e); }, true);
       addEventListener('pointercancel', e => { if (pid !== -1 && e.pointerId === pid) rel(e); }, true);
       el.addEventListener('contextmenu', e => e.preventDefault());
     };
-    btn('bFire', () => { this.fireHeld = true; this.fireTap = true; this.fireHoldT = 0; }, () => { this.fireHeld = false; });
-    btn('bDash', () => { this.dashQ = this.dashBuf; });
-    btn('bUlt', () => { this.ultQ = true; });
+    // third arg: undo the queued action when the press turns out to be a turn. Dash and the Breaker are
+    // buffered edges, so cancelling the buffer costs the player nothing if the frame has not read it yet.
+    btn('bFire', () => { this.fireHeld = true; this.fireTap = true; this.fireHoldT = 0; }, () => { this.fireHeld = false; }, () => { this.fireTap = false; });
+    btn('bDash', () => { this.dashQ = this.dashBuf; }, null, () => { this.dashQ = 0; });
+    btn('bUlt', () => { this.ultQ = true; }, null, () => { this.ultQ = false; });
     $('bPause').addEventListener('pointerdown', e => { e.stopPropagation(); this.pauseQ = true; });
     $('bMute').addEventListener('pointerdown', e => { e.stopPropagation(); this.muteQ = true; });
 
@@ -73,7 +90,8 @@ export class Input {
       try { app.setPointerCapture(e.pointerId); } catch (_) { }
       if (p.zone === 'move') this._stickShow(p);
       // two-finger tap => dash
-      const looks = [...this.pointers.values()].filter(q => q.zone === 'look');
+      // a finger handed over from a button is mid-gesture, not a fresh tap: it must not pair with this one
+      const looks = [...this.pointers.values()].filter(q => q.zone === 'look' && !q.adopted);
       if (looks.length >= 2 && (performance.now() - looks[0].t) < 250) { this.dashQ = this.dashBuf; looks.forEach(q => q.consumed = true); }
     });
     app.addEventListener('pointermove', e => {
@@ -114,6 +132,14 @@ export class Input {
     addEventListener('keyup', e => this.kb.delete(e.code));
     addEventListener('blur', () => this.reset());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.reset(); });
+  }
+  // Adopt a finger that started on a button into the look zone. Its origin is where it is NOW, not where it
+  // touched down, so the handoff contributes zero camera motion; slip is already spent and consumed/swiped
+  // are pre-set so the stroke can never also register as a tap-to-target or burn the swipe-down dash.
+  _adoptLook(e) {
+    if (this.pointers.has(e.pointerId)) return;
+    const t = performance.now();
+    this.pointers.set(e.pointerId, { id: e.pointerId, zone: 'look', adopted: true, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY, t, moved: 0, drift: 0, slip: true, consumed: true, swiped: true, lastY: e.clientY, lastT: t });
   }
   _stickShow(p) {
     const r = this.stickR, el = this.stickEl, k = Math.round(r * 0.8);

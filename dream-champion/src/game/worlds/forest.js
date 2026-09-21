@@ -75,7 +75,7 @@ export function build(ctx, tier) {
     let g = tube(pts, radii, lod ? 6 : 8, { bump: .16, vScale: .35 }); const ang = r() * TAU; g = xform(g, L.x, 0, L.z, ang, 1); woodParts.push(g);
     // broken branch stubs
     for (let k = 0; k < 3; k++) { const t = r.range(.15, .85); const bx = -len / 2 + t * len; const dir = new THREE.Vector3(r.range(-.4, .4), r.range(.4, 1), r.range(-1, 1)).normalize(); const p0 = new THREE.Vector3(bx, rad * .9, 0), p1 = p0.clone().addScaledVector(dir, r.range(.5, 1.1)); woodParts.push(xform(tube([p0, p1], [rad * .35, rad * .12], 5), L.x, 0, L.z, ang, 1)); }
-    obstacles.push({ x: L.x + Math.cos(ang) * len * .25, z: L.z - Math.sin(ang) * len * .25, r: rad + .45 }); obstacles.push({ x: L.x - Math.cos(ang) * len * .25, z: L.z + Math.sin(ang) * len * .25, r: rad + .45 });
+    obstacles.push({ x: L.x + Math.cos(ang) * len * .25, z: L.z - Math.sin(ang) * len * .25, r: rad + .45, h: rad * 2.4 }); obstacles.push({ x: L.x - Math.cos(ang) * len * .25, z: L.z + Math.sin(ang) * len * .25, r: rad + .45, h: rad * 2.4 });   // a fallen log is shin-high
   }
   // hanging ropes for skulls (wood mesh)
   const skullSpots = [];
@@ -104,7 +104,7 @@ export function build(ctx, tier) {
     obstacles.push({ x: sh.x, z: sh.z, r: 1.55 });
   }
   const rocks = scatter(r, lod ? 6 : 10, 4, R + 2, 4, [...cover.map(c => ({ ...c, r: 2 })), ...shrines.map(s => ({ ...s, r: 3 })), ...logs.map(l => ({ ...l, r: 4 }))]);
-  for (const rk of rocks) { const s = r.range(.5, 1.3); stoneParts.push(xform(rock(r, s, lod ? 0 : 1, r() * 10), rk.x, -s * .1, rk.z, r() * TAU, 1)); if (Math.hypot(rk.x, rk.z) < R) obstacles.push({ x: rk.x, z: rk.z, r: s * 1.0 }); }
+  for (const rk of rocks) { const s = r.range(.5, 1.3); stoneParts.push(xform(rock(r, s, lod ? 0 : 1, r() * 10), rk.x, -s * .1, rk.z, r() * TAU, 1)); if (Math.hypot(rk.x, rk.z) < R) obstacles.push({ x: rk.x, z: rk.z, r: s * 1.0, h: s * 1.3 }); }   // h: a knee-high rock must not pull the camera in
   const stones = caster(new THREE.Mesh(merge(stoneParts), stoneMat), SM, tier); stones.receiveShadow = true; group.add(stones); D.add(stones.geometry);
 
   // ---------- dead grass & ferns (instanced crossed quads) ----------

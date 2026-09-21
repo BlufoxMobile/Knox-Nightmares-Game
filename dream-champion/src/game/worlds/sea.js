@@ -34,6 +34,10 @@ export function build(ctx, tier) {
   const R = THEME.radius, GR = R + 8; const lod = tier.lod === 1; const r = seeded(7331); const D = new Disposer();
   const group = new THREE.Group(); group.name = 'sea'; const SM = shadowMats(D);
   const obstacles = [];
+  // Camera-only blockers. Anything upright the LENS can end up behind, including the props the player is
+  // meant to walk through and the ones outside the play radius (the camera trails 5-6 m, so at the rim it
+  // sits in the coral band beyond it). r/h are the drawn footprint and height, not a collision volume.
+  const camBlockers = [];
 
   // ---------- textures ----------
   const sandMap = noiseTexture(256, { octaves: 5, base: [98, 94, 82], range: [22, 20, 18], grain: 8, draw: (g, s) => { g.globalAlpha = .35; g.strokeStyle = '#6a6858'; g.lineWidth = 3; for (let i = 0; i < 26; i++) { const y = i / 26 * s; g.beginPath(); for (let x = 0; x <= s; x += 8) g.lineTo(x, y + Math.sin(x * .07 + i) * 5 + Math.sin(x * .19) * 2); g.stroke(); } g.globalAlpha = .5; for (let i = 0; i < 40; i++) { g.fillStyle = '#4a5a50'; g.beginPath(); g.ellipse(Math.random() * s, Math.random() * s, 3 + Math.random() * 9, 2 + Math.random() * 5, Math.random() * 3, 0, 7); g.fill(); } g.globalAlpha = 1; } });
@@ -68,9 +72,9 @@ export function build(ctx, tier) {
 
   // ---------- rock spires + boulders (static) ----------
   const rockParts = []; const spires = [];
-  for (let i = 0; i < (lod ? 6 : 9); i++) { const a = i / 9 * TAU + r.range(-.2, .2); const d = R + 1 + r.range(0, 6); const hgt = r.range(6, 13), w = r.range(1.4, 2.6); const g = new THREE.ConeGeometry(w, hgt, lod ? 6 : 8, 4); roughen(g, .35, 1.1, i * 3); rockParts.push(xform(g, Math.cos(a) * d, hgt * .42, Math.sin(a) * d, r() * TAU, 1, r.range(-.12, .12), r.range(-.12, .12))); spires.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, r: w }); }
+  for (let i = 0; i < (lod ? 6 : 9); i++) { const a = i / 9 * TAU + r.range(-.2, .2); const d = R + 1 + r.range(0, 6); const hgt = r.range(6, 13), w = r.range(1.4, 2.6); const g = new THREE.ConeGeometry(w, hgt, lod ? 6 : 8, 4); roughen(g, .35, 1.1, i * 3); rockParts.push(xform(g, Math.cos(a) * d, hgt * .42, Math.sin(a) * d, r() * TAU, 1, r.range(-.12, .12), r.range(-.12, .12))); spires.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, r: w }); camBlockers.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, r: w * .8 }); }
   const boulders = scatter(r, lod ? 6 : 10, 4, R + 4, 4, [{ x: 0, z: 0, r: 3 }]);
-  for (const b of boulders) { const s = r.range(.5, 1.4); rockParts.push(xform(rock(r, s, lod ? 0 : 1, r() * 10), b.x, -s * .1, b.z, r() * TAU, 1)); if (Math.hypot(b.x, b.z) < R) obstacles.push({ x: b.x, z: b.z, r: s * 1.05 }); }
+  for (const b of boulders) { const s = r.range(.5, 1.4); rockParts.push(xform(rock(r, s, lod ? 0 : 1, r() * 10), b.x, -s * .1, b.z, r() * TAU, 1)); if (Math.hypot(b.x, b.z) < R) obstacles.push({ x: b.x, z: b.z, r: s * 1.05, h: s * 1.3 }); else camBlockers.push({ x: b.x, z: b.z, r: s * 1.05, h: s * 1.3 }); }
   const rocks = caster(new THREE.Mesh(merge(rockParts), rockMat), SM, tier); rocks.receiveShadow = true; group.add(rocks); D.add(rocks.geometry);
 
   // ---------- shipwreck hull piece + anchor + chain ----------
@@ -92,7 +96,7 @@ export function build(ctx, tier) {
     ironParts.push(A(new THREE.CylinderGeometry(.09, .11, 2.6, 6), 0, .6, 0, 0, 0, 1.2)); ironParts.push(A(new THREE.TorusGeometry(.32, .07, 6, 10), 1.2, 1.2, 0, 0, 0, 0));
     ironParts.push(A(new THREE.TorusGeometry(1.1, .1, 6, 14, Math.PI).rotateZ(Math.PI), -1.1, .35, 0, 0, 0, 0)); ironParts.push(A(new THREE.ConeGeometry(.22, .5, 4).rotateZ(-Math.PI / 2), -.1, .35, 0), A(new THREE.ConeGeometry(.22, .5, 4).rotateZ(Math.PI / 2), -2.2, .35, 0));
     ironParts.push(A(new THREE.BoxGeometry(.12, .12, 1.6), 1.0, 1.1, 0));
-    obstacles.push({ x: ax, z: az, r: 1.4 });
+    obstacles.push({ x: ax, z: az, r: 1.4, h: 1.7 });
     // chain
     const c0 = new THREE.Vector3(ax + Math.cos(aa) * 1.2, 1.25, az - Math.sin(aa) * 1.2), c1 = new THREE.Vector3(wreck.x - Math.cos(wreck.a) * 4, 2.6, wreck.z + Math.sin(wreck.a) * 4);
     const nl = lod ? 14 : 22; for (let i = 0; i <= nl; i++) { const t = i / nl; const p = c0.clone().lerp(c1, t); p.y -= Math.sin(t * Math.PI) * 1.4; const dir = c1.clone().sub(c0).normalize(); const ry = Math.atan2(dir.x, dir.z); ironParts.push(xform(new THREE.TorusGeometry(.22, .05, 5, 8), p.x, p.y, p.z, ry, 1, i % 2 ? Math.PI / 2 : 0, 0)); }
@@ -109,7 +113,11 @@ export function build(ctx, tier) {
   const coralPos = scatter(r, nCoral * 2, 3.5, R + 5, 1.6, [...spires, ...boulders.map(b => ({ ...b, r: 1.5 })), { x: 0, z: 0, r: 3 }]);
   const corA = instancer(coralA, coralMat, Math.ceil(coralPos.length / 2)); if (!lod) caster(corA, SM, tier); const corB = instancer(coralB, coralMat, Math.floor(coralPos.length / 2)); corA.name = 'coralA'; corB.name = 'coralB';
   { const m = new THREE.Matrix4(), q = new THREE.Quaternion(), col = new THREE.Color(); const palette = [0xff4a7a, 0xff8a3a, 0xb04aff, 0x2affc8, 0xffd23a, 0xff3a3a, 0x4a9aff];
-    coralPos.forEach((p, i) => { const mesh = i % 2 ? corB : corA, idx = i >> 1; const s = r.range(.7, 1.6); q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * TAU); m.compose(new THREE.Vector3(p.x, -.05, p.z), q, new THREE.Vector3(s, s * r.range(.8, 1.3), s)); mesh.setMatrixAt(idx, m); col.set(r.pick(palette)).multiplyScalar(r.range(.6, 1)); mesh.setColorAt(idx, col); if (Math.hypot(p.x, p.z) < R && s > 1.1) obstacles.push({ x: p.x, z: p.z, r: .45 * s }); });
+    coralPos.forEach((p, i) => { const mesh = i % 2 ? corB : corA, idx = i >> 1; const s = r.range(.7, 1.6), ys = r.range(.8, 1.3); q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), r() * TAU); m.compose(new THREE.Vector3(p.x, -.05, p.z), q, new THREE.Vector3(s, s * ys, s)); mesh.setMatrixAt(idx, m); col.set(r.pick(palette)).multiplyScalar(r.range(.6, 1)); mesh.setColorAt(idx, col); const din = Math.hypot(p.x, p.z);
+      // Only the big tubes are solid -- 33 of the 69 in the arena are walk-through ON PURPOSE, because a
+      // collidable coral every 1.6 m is a maze. But every one of them, up to 1.8 m tall, can hide a 1.5 m
+      // Knox, so all of them go on the camera's list.
+      if (din < R && s > 1.1) obstacles.push({ x: p.x, z: p.z, r: .45 * s }); else if (din < R + 8) camBlockers.push({ x: p.x, z: p.z, r: .42 * s, h: (mesh === corB ? 1.41 : 1.69) * s * ys - .1 }); });
   }
   group.add(corA, corB);
 
@@ -144,7 +152,7 @@ export function build(ctx, tier) {
   const consoleMesh = new THREE.Mesh(merge([consoleBody, screenGeo]), consoleMat);
   consoleMesh.position.set(secret.x, secret.y - .22, secret.z); consoleMesh.rotation.set(0.1, 0.7, 0.18); caster(consoleMesh, SM, tier); consoleMesh.receiveShadow = true; group.add(consoleMesh); D.add(consoleMesh.geometry);
   halos.set(halos.n - 1, secret.x, secret.y + .1, secret.z, 0.3, 0.6, 1.0, 1.4, .5);
-  obstacles.push({ x: secret.x, z: secret.z, r: .8 });
+  obstacles.push({ x: secret.x, z: secret.z, r: .8, h: .75 });
 
   // ---------- god rays ----------
   const rayGeo = new THREE.CylinderGeometry(1.0, 3.2, 14, lod ? 10 : 14, 1, true).translate(0, 7, 0); D.add(rayGeo);
@@ -191,5 +199,5 @@ export function build(ctx, tier) {
     halos.dispose(); D.dispose(); group.removeFromParent();
   }
 
-  return { group, update, dispose, spawnPoints, bossSpawn, obstacles, lampsOff() { }, blackout() { }, blackwater, lightning() { }, eyes() { }, trophies() { }, secretPos: secret };
+  return { group, update, dispose, spawnPoints, bossSpawn, obstacles, camBlockers: obstacles.concat(camBlockers), lampsOff() { }, blackout() { }, blackwater, lightning() { }, eyes() { }, trophies() { }, secretPos: secret };
 }
