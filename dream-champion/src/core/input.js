@@ -18,26 +18,42 @@ export class Input {
     this.kb = new Set();
     this.pointers = new Map();
     this.stickEl = $('stick'); this.knob = this.stickEl.firstElementChild;
-    this.stickR = 58; this.dead = 0.1;
+    // Floating stick geometry + response. Tuned for a kid's thumb on a phone: short travel to full speed,
+    // linear (not expo) curve, full tilt reached at 78% of the ring so the rim is never a requirement.
+    this.stickR = 46; this.dead = 0.08; this.curve = 1.0; this.fullAt = 0.78;
+    this.lookScaleX = 1.6; this.lookScaleY = 1.15; // touch-only look gain (mouse/gamepad unchanged)
+    this.tapSlop = 8; this.tapMax = 22; this.tapMs = 320; // camera ignores the first tapSlop px; a touch still
+                                                   // counts as a tap-to-target while it drifts under tapMax
+    this.dashBuf = 220;                            // ms of dash-press buffering (was 150)
     this.enabled = true;
     this.lefty = !!save.data.settings.lefty;
     this._bind();
   }
   _zone(x, y) {
-    const w = innerWidth; const left = this.lefty ? x > w * 0.58 : x < w * 0.42;
+    // Straight 50/50 split: the half of the screen under the movement thumb is ALWAYS the stick.
+    // (was 42% / 58% — a thumb resting just past the middle silently became a camera drag)
+    const w = innerWidth; const left = this.lefty ? x > w * 0.5 : x < w * 0.5;
     return left ? 'move' : 'look';
   }
   _bind() {
     const app = this.app;
     const btn = (id, down, up) => {
-      const el = $(id);
-      el.addEventListener('pointerdown', e => { e.preventDefault(); e.stopPropagation(); el.setPointerCapture(e.pointerId); el.classList.add('down'); this.touchActive = e.pointerType !== 'mouse'; down(e); this.anyQ = true; });
-      const rel = e => { el.classList.remove('down'); up && up(e); };
+      const el = $(id); let pid = -1;
+      el.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        pid = e.pointerId; el.classList.add('down'); this.touchActive = e.pointerType !== 'mouse';
+        down(e); this.anyQ = true;                                   // act FIRST: a capture failure must never eat a press
+        try { el.setPointerCapture(e.pointerId); } catch (_) { }     // throws (NotFoundError) on some iOS pointer states
+      });
+      const rel = e => { if (e && e.pointerId != null && pid !== -1 && e.pointerId !== pid) return; if (!el.classList.contains('down')) return; pid = -1; el.classList.remove('down'); up && up(e); };
       el.addEventListener('pointerup', rel); el.addEventListener('pointercancel', rel); el.addEventListener('lostpointercapture', rel);
+      // failsafe: if capture was refused the release lands on some other element — never leave a button stuck on
+      addEventListener('pointerup', e => { if (pid !== -1 && e.pointerId === pid) rel(e); }, true);
+      addEventListener('pointercancel', e => { if (pid !== -1 && e.pointerId === pid) rel(e); }, true);
       el.addEventListener('contextmenu', e => e.preventDefault());
     };
     btn('bFire', () => { this.fireHeld = true; this.fireTap = true; this.fireHoldT = 0; }, () => { this.fireHeld = false; });
-    btn('bDash', () => { this.dashQ = 150; });
+    btn('bDash', () => { this.dashQ = this.dashBuf; });
     btn('bUlt', () => { this.ultQ = true; });
     $('bPause').addEventListener('pointerdown', e => { e.stopPropagation(); this.pauseQ = true; });
     $('bMute').addEventListener('pointerdown', e => { e.stopPropagation(); this.muteQ = true; });
@@ -45,40 +61,51 @@ export class Input {
     app.addEventListener('pointerdown', e => {
       if (!this.enabled) return; if (e.target.closest('button,#ov,.panel')) return;
       e.preventDefault(); this.anyQ = true;
-      if (e.pointerType === 'mouse') { this.touchActive = false; if (e.button === 0) { this.fireHeld = true; this.fireTap = true; this.fireHoldT = 0; this.mouseDown = true; } else if (e.button === 2) { this.dashQ = 150; } this._mouse = { x: e.clientX, y: e.clientY }; return; }
+      if (e.pointerType === "mouse") { this.touchActive = false; if (e.button === 0) { this.fireHeld = true; this.fireTap = true; this.fireHoldT = 0; this.mouseDown = true; } else if (e.button === 2) { this.dashQ = this.dashBuf; } this._mouse = { x: e.clientX, y: e.clientY }; return; }
       this.touchActive = true; document.body.classList.remove('nokb');
       const zone = this._zone(e.clientX, e.clientY);
       const hasMove = [...this.pointers.values()].some(p => p.zone === 'move');
-      const p = { id: e.pointerId, zone: zone === 'move' && !hasMove ? 'move' : 'look', ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY, t: performance.now(), moved: 0, lastY: e.clientY, lastT: performance.now() };
+      // a SECOND finger in the move half is ignored, not promoted to a camera drag
+      // (a resting thumb / palm on the left used to yank the camera around)
+      const z = zone === 'move' ? (hasMove ? 'none' : 'move') : 'look';
+      const p = { id: e.pointerId, zone: z, ox: e.clientX, oy: e.clientY, x: e.clientX, y: e.clientY, t: performance.now(), moved: 0, drift: 0, slip: false, lastY: e.clientY, lastT: performance.now() };
       this.pointers.set(e.pointerId, p);
       try { app.setPointerCapture(e.pointerId); } catch (_) { }
       if (p.zone === 'move') this._stickShow(p);
       // two-finger tap => dash
       const looks = [...this.pointers.values()].filter(q => q.zone === 'look');
-      if (looks.length >= 2 && (performance.now() - looks[0].t) < 250) { this.dashQ = 150; looks.forEach(q => q.consumed = true); }
+      if (looks.length >= 2 && (performance.now() - looks[0].t) < 250) { this.dashQ = this.dashBuf; looks.forEach(q => q.consumed = true); }
     });
     app.addEventListener('pointermove', e => {
       if (e.pointerType === 'mouse') { if (document.pointerLockElement === app) { this.look.dx += e.movementX; this.look.dy += e.movementY; } else if (this._mouse && this.mouseDown === false && false) { } this._mouse = { x: e.clientX, y: e.clientY }; return; }
       const p = this.pointers.get(e.pointerId); if (!p) return;
       const dx = e.clientX - p.x, dy = e.clientY - p.y; p.moved += Math.abs(dx) + Math.abs(dy);
       if (p.zone === 'move') { p.x = e.clientX; p.y = e.clientY; this._stickUpdate(p); }
-      else {
-        this.look.dx += dx; this.look.dy += dy; p.x = e.clientX; p.y = e.clientY;
-        // quick swipe down => dash
-        const now = performance.now(); if (e.clientY - p.oy > 90 && now - p.t < 140 && !p.swiped) { p.swiped = true; this.dashQ = 150; }
-      }
+      else if (p.zone === 'look') {
+        // tap slop: the first few px never move the camera, so tap-to-target doesn't jitter the aim
+        const drift = Math.hypot(e.clientX - p.ox, e.clientY - p.oy); if (drift > p.drift) p.drift = drift;
+        if (!p.slip && drift > this.tapSlop) p.slip = true;
+        if (p.slip) { this.look.dx += dx * this.lookScaleX; this.look.dy += dy * this.lookScaleY; }
+        p.x = e.clientX; p.y = e.clientY;
+        // quick swipe down => dash (deliberate flick only; a lazy drag down must not burn a dash charge)
+        const now = performance.now(); if (e.clientY - p.oy > 120 && now - p.t < 130 && !p.swiped) { p.swiped = true; this.dashQ = this.dashBuf; }
+      } else { p.x = e.clientX; p.y = e.clientY; }
     });
     const end = e => {
       if (e.pointerType === 'mouse') { if (e.button === 0) { this.fireHeld = false; this.mouseDown = false; } return; }
       const p = this.pointers.get(e.pointerId); if (!p) return; this.pointers.delete(e.pointerId);
       if (p.zone === 'move') { this.move.x = 0; this.move.y = 0; this.stickEl.classList.remove('on'); }
-      else if (!p.consumed && p.moved < 10 && performance.now() - p.t < 220) { this.tap = { x: p.ox, y: p.oy }; }
+      // the release point counts toward drift too (a finger can jump on lift-off)
+      else if (p.zone === 'look') { const d2 = Math.hypot(e.clientX - p.ox, e.clientY - p.oy); if (d2 > p.drift) p.drift = d2; }
+      // tap-to-target: judged by how far the finger DRIFTED (p.slip), not by accumulated path length —
+      // a wobbly thumb tap used to fail at ~10px of jitter
+      if (p.zone === 'look' && !p.consumed && p.drift < this.tapMax && performance.now() - p.t < this.tapMs) { this.tap = { x: p.ox, y: p.oy }; }
     };
     app.addEventListener('pointerup', end); app.addEventListener('pointercancel', end);
     app.addEventListener('contextmenu', e => e.preventDefault());
     addEventListener('keydown', e => {
       if (e.repeat) return; this.kb.add(e.code); document.body.classList.add('nokb'); this.anyQ = true;
-      if (e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.dashQ = 150;
+      if (e.code === 'Space' || e.code === 'ShiftLeft' || e.code === 'ShiftRight') this.dashQ = this.dashBuf;
       if (e.code === 'KeyQ' || e.code === 'KeyE') this.ultQ = true;
       if (e.code === 'Escape' || e.code === 'KeyP') this.pauseQ = true;
       if (e.code === 'KeyM') this.muteQ = true;
@@ -88,12 +115,18 @@ export class Input {
     addEventListener('blur', () => this.reset());
     document.addEventListener('visibilitychange', () => { if (document.hidden) this.reset(); });
   }
-  _stickShow(p) { this.stickEl.classList.add('on'); this.stickEl.style.left = p.ox + 'px'; this.stickEl.style.top = p.oy + 'px'; this.knob.style.transform = 'translate(0,0)'; }
+  _stickShow(p) {
+    const r = this.stickR, el = this.stickEl, k = Math.round(r * 0.8);
+    // keep the drawn ring exactly the size of the live radius, whatever stickR is tuned to
+    el.style.width = el.style.height = (r * 2) + 'px'; el.style.margin = `${-r}px 0 0 ${-r}px`;
+    this.knob.style.width = this.knob.style.height = k + 'px'; this.knob.style.margin = `${-k / 2}px 0 0 ${-k / 2}px`;
+    el.classList.add('on'); el.style.left = p.ox + 'px'; el.style.top = p.oy + 'px'; this.knob.style.transform = 'translate(0,0)';
+  }
   _stickUpdate(p) {
     let dx = p.x - p.ox, dy = p.y - p.oy; const r = this.stickR; let m = Math.hypot(dx, dy);
     if (m > r) { dx *= r / m; dy *= r / m; m = r; }
     this.knob.style.transform = `translate(${dx}px,${dy}px)`;
-    let n = m / r; n = n < this.dead ? 0 : Math.pow((n - this.dead) / (1 - this.dead), 1.3); n = clamp(n / 0.85, 0, 1);
+    let n = m / r; n = n < this.dead ? 0 : Math.pow((n - this.dead) / (1 - this.dead), this.curve); n = clamp(n / this.fullAt, 0, 1);
     if (m > 0) { this.move.x = dx / m * n; this.move.y = -dy / m * n; } else { this.move.x = 0; this.move.y = 0; }
   }
   reset() { this.move.x = this.move.y = 0; this.look.dx = this.look.dy = 0; this.fireHeld = false; this.pointers.clear(); this.stickEl.classList.remove('on'); this.kb.clear(); this.mouseDown = false; document.querySelectorAll('#ctl button').forEach(b => b.classList.remove('down')); }
@@ -111,7 +144,7 @@ export class Input {
       const rx = gp.axes[2] || 0, ry = gp.axes[3] || 0; if (Math.abs(rx) > 0.15) this.look.dx += rx * 900 * dt; if (Math.abs(ry) > 0.15) this.look.dy += ry * 600 * dt;
       const b = i => gp.buttons[i] && gp.buttons[i].pressed;
       const fire = b(7) || b(5); if (fire && !this._gpFire) { this.fireTap = true; this.fireHoldT = 0; } this._gpFire = fire; if (fire) this.fireHeld = true; else if (this._gpFireHeld) this.fireHeld = false; this._gpFireHeld = fire;
-      const dash = b(0) || b(1) || b(4) || b(6); if (dash && !this._gpDash) this.dashQ = 150; this._gpDash = dash;
+      const dash = b(0) || b(1) || b(4) || b(6); if (dash && !this._gpDash) this.dashQ = this.dashBuf; this._gpDash = dash;
       const ult = b(2) || b(3); if (ult && !this._gpUlt) this.ultQ = true; this._gpUlt = ult;
       const pause = b(9); if (pause && !this._gpPause) this.pauseQ = true; this._gpPause = pause;
       if (fire || dash || ult) this.anyQ = true;

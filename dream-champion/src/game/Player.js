@@ -29,6 +29,12 @@ export class Player {
     const gltf = this.ctx.assets.get('knox'); const src = gltf.scene; this.model = src; this.root.add(src);
     let scan = null; src.traverse(o => { if (o.isSkinnedMesh) scan = o; if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false; } });
     this.scan = scan; const mat = scan.material; mat.roughness = 0.82; mat.metalness = 0; mat.envMapIntensity = 0.5; if (mat.map) mat.map.anisotropy = 4; mat.emissive = new THREE.Color(0); this.mat = mat;
+    // The scan is an OPEN shell: 448 boundary edges in 9 loops, including a ~0.55 m seam down each side of the
+    // torso where the arms were cut off (HeroGear covers them) and a ~0.37 m opening at the hips. Rendered
+    // single-sided, every camera angle that sees into one of those openings shows the world straight through
+    // Knox -- measured at 1.2-9.2% of his silhouette across a 12-point yaw sweep. Draw him double-sided so a
+    // backface fills the hole instead. (Knox is ~26k tris; he is already drawn twice for the shadow map.)
+    mat.side = THREE.DoubleSide; mat.shadowSide = THREE.BackSide;   // keep the pre-existing single-sided shadow pass
     // scale so Knox is ~1.5 m (the scan is 1.7 m)
     src.updateMatrixWorld(true); const box = new THREE.Box3().setFromObject(scan); const h = box.max.y - box.min.y; const s = 1.5 / h; src.scale.setScalar(s); src.position.y = -box.min.y * s; src.updateMatrixWorld(true);
     this.gear = new HeroGear(scan, 0x4de3ff);
@@ -60,7 +66,7 @@ export class Player {
     this.cam.yaw -= yawIn * friction; this.cam.pitch = clamp(this.cam.pitch - pitchIn * friction, this.swim ? -1.1 : -0.95, this.swim ? 0.9 : 0.42);
     const looking = Math.abs(inp.ldx) + Math.abs(inp.ldy) > 0.5; if (looking) this.cam.autoT = 0.5; else this.cam.autoT -= step;
     // movement (camera relative)
-    const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy); const rx = Math.cos(cy), rz = -Math.sin(cy);
+    const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy); const rx = -Math.cos(cy), rz = Math.sin(cy);
     let mx = inp.mx, my = inp.my; const ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; }
     const wantX = fx * my + rx * mx, wantZ = fz * my + rz * mx; const moving = ml > 0.05;
     const maxSp = (this.swim ? 5.6 : 6.4) * (this.buffs.quick > 0 ? 1.15 : 1);
@@ -72,8 +78,10 @@ export class Player {
       this.vx = R.dirx * sp; this.vz = R.dirz * sp; if (R.t >= ROLL.dur) { R.t = -1; }
       if (this.buffs.quick > 0 && Math.random() < 0.6) this.ctx.particlesAdd.one(this.x, 0.8, this.z, { type: P.DOT, color: new THREE.Color(0x4de3ff), life: 0.35, size: 0.9, sizeEnd: 0.2, vx: 0, vy: 0, vz: 0 });
     } else {
-      const acc = moving ? 1 - Math.exp(-step / 0.10) : 1 - Math.exp(-step / 0.08);
-      this.vx = lerp(this.vx, wantX * maxSp * Math.min(1, ml), acc); this.vz = lerp(this.vz, wantZ * maxSp * Math.min(1, ml), acc);
+      // NOTE: |want| already equals the stick magnitude — multiplying by ml again squared the response
+      // (half a stick push gave a quarter of the speed). Target speed must be linear in stick tilt.
+      const acc = moving ? 1 - Math.exp(-step / 0.065) : 1 - Math.exp(-step / 0.07);
+      this.vx = lerp(this.vx, wantX * maxSp, acc); this.vz = lerp(this.vz, wantZ * maxSp, acc);
     }
     this.x += this.vx * step; this.z += this.vz * step; this.speedN = Math.hypot(this.vx, this.vz) / maxSp;
     // arena bounds + obstacles
@@ -91,7 +99,9 @@ export class Player {
     this.faceYaw = dampAng(this.faceYaw, targetYaw, this.locked ? 22 : 14, step);
     // firing
     let autoOk = false;
-    if (this.locked) { const ld = Math.hypot(this.locked.x - this.x, this.locked.z - this.z); autoOk = ld < 8 ? this.lockAng < 50 * Math.PI / 180 : (ld < 16 && this.lockAng < 20 * Math.PI / 180); }
+    // 42deg = half the horizontal FOV on a phone: auto-blast anything ON SCREEN when it is close, but never
+    // shoot at something the player cannot see (50deg was outside the frame edge).
+    if (this.locked) { const ld = Math.hypot(this.locked.x - this.x, this.locked.z - this.z); autoOk = ld < 8 ? this.lockAng < 42 * Math.PI / 180 : (ld < 16 && this.lockAng < 20 * Math.PI / 180); }
     const fireHeld = (inp.fire && !this.charging) || (g.autoBlast && (autoOk || this.tapLock > 0) && this.lockT > 0.12 && !inp.fire && !this.charging);
     // charge shot: hold fire with nothing locked (or double-tap via dashQ? no) — releasing fires the charged shot
     if (inp.fire && inp.fireHold >= 0.6 && !this.charging && this.ammo.charge && !this.locked) { this.charging = true; this.chargeT = 0; g.audio.play('sfx_charge', { vol: 0.6 }); }
@@ -100,8 +110,16 @@ export class Player {
     if (inp.ult && this.ult >= 100) g.breaker(this);
     this.combatT = enemies.some(e => e.alive) ? 3 : Math.max(0, this.combatT - step);
     // camera follow (fixed for determinism, smoothed in update)
-    if (this.cam.autoT <= 0 && moving && !this.locked) { this.cam.yaw = dampAng(this.cam.yaw, Math.atan2(this.vx, this.vz), 2.2, step); }
-    if (this.locked && !looking) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 0.3 * step * 3, -1.05 * step, 1.05 * step); }
+    // Auto-follow. The old target was the raw travel angle, which is positive feedback under camera-relative
+    // control: "right" is always camYaw-90deg, so holding right rotated the camera forever (measured -2.85 rad/s,
+    // a full circle in 2.2 s). Adding the stick's own angle makes the fixed point the CURRENT yaw: the camera only
+    // turns when Knox is actually travelling somewhere other than where the stick points (roll, knockback, slide).
+    if (this.cam.autoT <= 0 && moving && !this.locked && this.speedN > 0.2) {
+      const ty = Math.atan2(this.vx, this.vz) + Math.atan2(mx, my);
+      this.cam.yaw += clamp(angDiff(this.cam.yaw, ty) * 1.8, -0.9, 0.9) * step;
+    }
+    // pull the camera onto the locked enemy — but never spin the player 180deg for something behind them
+    if (this.locked && !looking && this.lockAng < 1.6) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 0.3 * step * 3, -1.05 * step, 1.05 * step); }
     this.cam.targetDist = (g.bossActive ? 4.3 : 3.6) - (aiming ? 0.5 : 0) + (this.swim ? 0.6 : 0);
     // shield/overcharge visuals
     if (this.buffs.shield > 0 && Math.random() < 0.3) this.ctx.particlesAdd.one(this.x + rnd(-.5, .5), this.y + rnd(0.2, 1.6), this.z + rnd(-.5, .5), { type: P.DOT, color: new THREE.Color(0xffcf4a), life: 0.5, size: 0.15, sizeEnd: 0, vx: 0, vy: 0.4, vz: 0 });
@@ -121,9 +139,11 @@ export class Player {
       let best = null, bd = 80; for (const e of enemies) { if (!e.alive) continue; _v.set(e.x, (e.y || 0) + e.height * 0.6, e.z).project(cam); if (_v.z > 1) continue; const sx = (_v.x + 1) / 2 * innerWidth, sy = (1 - _v.y) / 2 * innerHeight; const d = Math.hypot(sx - inp.tap.x, sy - inp.tap.y); if (d < bd) { bd = d; best = e; } }
       if (best) { this.locked = best; this.tapLock = 2; this.lockT = 0.12; }
     }
-    if (this.tapLock > 0) { this.tapLock -= step; if (this.locked && this.locked.alive) { this.lockT += step; return; } this.tapLock = 0; }
-    let best = null, bs = -1; const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy);
+    const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy);
+    // angle to the current lock: needed by the tap-lock path too (auto-blast gate + camera pull)
     if (this.locked && this.locked.alive) { const dx = this.locked.x - this.x, dz = this.locked.z - this.z; const d = Math.hypot(dx, dz) || 1; this.lockAng = Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)); }
+    if (this.tapLock > 0) { this.tapLock -= step; if (this.locked && this.locked.alive) { this.lockT += step; return; } this.tapLock = 0; }
+    let best = null, bs = -1;
     for (const e of enemies) {
       if (!e.alive || e.noLock) continue; const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz); if (d > 26 || d < 0.01) continue;
       const ang = Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)); if (ang > 60 * Math.PI / 180 && d > 3.5) continue;

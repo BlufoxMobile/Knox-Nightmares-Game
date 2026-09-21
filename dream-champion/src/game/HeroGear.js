@@ -9,7 +9,9 @@ function armorMaterial(accent) {
   const map = new THREE.CanvasTexture(c); map.colorSpace = THREE.SRGBColorSpace; map.wrapS = map.wrapT = THREE.RepeatWrapping;
   const e = document.createElement('canvas'); e.width = 256; e.height = 256; const ge = e.getContext('2d'); ge.fillStyle = '#000'; ge.fillRect(0, 0, 256, 256); ge.strokeStyle = '#fff'; ge.lineWidth = 3; for (let y = 32; y < 256; y += 64) { ge.beginPath(); ge.moveTo(0, y); ge.lineTo(256, y); ge.stroke(); }
   const em = new THREE.CanvasTexture(e); em.colorSpace = THREE.SRGBColorSpace; em.wrapS = em.wrapT = THREE.RepeatWrapping;
-  return new THREE.MeshStandardMaterial({ map, roughness: 0.55, metalness: 0.35, emissive: new THREE.Color(accent), emissiveMap: em, emissiveIntensity: 1.4 });
+  // DoubleSide: tube() returns an UNCAPPED cylinder (the "cap the start ring" below was never implemented),
+  // so a single-sided sleeve is see-through from either end. Same reason the scan body is double-sided.
+  return new THREE.MeshStandardMaterial({ map, roughness: 0.55, metalness: 0.35, emissive: new THREE.Color(accent), emissiveMap: em, emissiveIntensity: 1.4, side: THREE.DoubleSide, shadowSide: THREE.BackSide });
 }
 
 export class HeroGear {
@@ -17,7 +19,7 @@ export class HeroGear {
     this.scan = scan; this.skeleton = scan.skeleton; this.accent = accent;
     this.bone = {}; for (const b of this.skeleton.bones) this.bone[b.name] = b;
     scan.updateMatrixWorld(true);
-    this.mat = armorMaterial(accent); this.matGlove = new THREE.MeshStandardMaterial({ color: 0x151720, roughness: 0.7, metalness: 0.2 });
+    this.mat = armorMaterial(accent); this.matGlove = new THREE.MeshStandardMaterial({ color: 0x151720, roughness: 0.7, metalness: 0.2, side: THREE.DoubleSide, shadowSide: THREE.BackSide });
     this.meshes = []; this.build();
   }
   // world->bone-local scale factor (bones live under a 0.01-scaled armature)

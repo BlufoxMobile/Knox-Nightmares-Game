@@ -57,7 +57,7 @@ export class Enemy {
     if (!this.alive || this.noHit) return; const g = this.game; const d = this.def;
     if (this.boss && this.bossIntro) return;
     let mul = 1;
-    if (this.boss) { mul *= this.weakOpen ? (head ? 2 : 1) : (this.enraged ? 0.5 : 0.38); } else if (head) mul = 1;
+    if (this.boss) { mul *= this.weakOpen ? (head ? 1.6 : 1) : (this.enraged ? 0.5 : 0.38); } else if (head) mul = 1;
     if (g.player.buffs.vision > 0) mul *= 1.2;
     const amt = Math.round(dmg * mul); this.hp -= amt; this.flash = 0.06; this.hitT = 0.25;
     const kind = head ? 'weak' : 'body'; g.onEnemyHit(this, amt, head, proj);
@@ -121,7 +121,7 @@ export class Enemy {
       this.anim.update(dt);
     }
     // flash / tint
-    const f = this.flash > 0 ? (this.boss ? 0.35 : 0.8) : 0; const vision = g.player.buffs.vision > 0; for (const m of this.mats) { if (f) m.emissive.setRGB(f, f, f); else if (vision) m.emissive.setRGB(0.8, 0.05, 0.05); else if (this.windup > 0) { const p = (Math.sin(g.time * 50) * 0.5 + 0.5) * 0.7; m.emissive.setRGB(p, p * 0.1, p * 0.05); } else if (this.boss && this.weakOpen) { m.emissive.setRGB(0.6, 0.1, 0.0); } else m.emissive.setRGB(0, 0, 0); }
+    const f = this.flash > 0 ? (this.boss ? 0.35 : 0.8) : 0; const vision = g.player.buffs.vision > 0; for (const m of this.mats) { if (f) m.emissive.setRGB(f, f, f); else if (vision) m.emissive.setRGB(0.8, 0.05, 0.05); else if (this.windup > 0) { const p = (Math.sin(g.time * 50) * 0.5 + 0.5) * 0.7; m.emissive.setRGB(p, p * 0.1, p * 0.05); } else if (this.boss && this.weakOpen) { m.emissive.setRGB(0.6, 0.1, 0.0); } else if (this.def.elite) { const q = 0.16 + Math.sin(g.time * 3) * 0.05; m.emissive.setRGB(q, q * 0.12, q * 0.05); } else m.emissive.setRGB(0, 0, 0); }
   }
 }
 
@@ -136,22 +136,43 @@ function meleeWindup(e, step, player, dist, nx, nz, g, clipKey = 'attack') {
 }
 function startWindup(e, g, clip, scale = 1.0) { e.state = 'windup'; e.windup = e.def.attack.windup; e.vx = e.vz = 0; if (e.anim) { const a = e.anim.shot(clip, null, 0.05, { timeScale: scale }); } g.audio.play('sfx_' + e.def.voice + '_windup', { x: e.x, z: e.z, vol: 0.8, vary: 0.1 }); }
 
+// ---------- pressure helpers (shared by the melee brains) ----------
+// Anti-kite: a chaser closes on a fleeing player, but only just. Capped at 1.3x its own speed so a
+// dodge-roll (~10 m/s burst) always breaks contact -- plain backpedalling no longer does.
+function chaseSpeed(base, player, nx, nz) {
+  const away = -(player.vx * nx + player.vz * nz);
+  if (away <= 0.3) return base;
+  return Math.min(Math.max(base, away + 1.2), base * 1.3);
+}
+// Aim where the player is GOING, not where they are. The lead is capped so the path stays readable.
+function leadX(player, dist, speed) { return player.x + player.vx * Math.min(dist / Math.max(speed, 0.1), 1.1); }
+function leadZ(player, dist, speed) { return player.z + player.vz * Math.min(dist / Math.max(speed, 0.1), 1.1); }
+// Where a monster holding no attack token should stand: IN FRONT of a running player (cutting off the
+// retreat), spread around a standing one. This is what turns a harmless orbiting crowd into a net.
+function flankX(e, player, r) { const sp = Math.hypot(player.vx, player.vz); return sp > 1.5 ? player.x + player.vx / sp * r : player.x - Math.sin(e.orbit) * r; }
+function flankZ(e, player, r) { const sp = Math.hypot(player.vx, player.vz); return sp > 1.5 ? player.z + player.vz / sp * r : player.z - Math.cos(e.orbit) * r; }
+
 export const BRAINS = {
   // Skinwalker stalker: freezes when watched (creepy), rushes when not; claw swipe with cone telegraph
   stalker(e, step, player, dist, nx, nz, g) {
     const d = e.def, A = d.attack; e.cd -= step;
     if (e.state === 'windup') { meleeWindup(e, step, player, dist, nx, nz, g); return; }
-    if (e.state === 'attack') { e.stT += step; if (e.stT > 0.9) { e.state = 'move'; e.cd = rnd(1.4, 2.6); e.releaseToken(); } return; }
-    const watched = g.isOnScreen(e) && dist > 5 && e.hitT <= 0; e.seen = watched ? e.seen + step : 0;
+    if (e.state === 'attack') { e.stT += step; if (e.stT > 0.85) { e.state = 'move'; e.cd = rnd(1.0, 2.0); e.releaseToken(); } return; }
+    const watched = g.isOnScreen(e) && dist > 10 && e.hitT <= 0; e.seen = watched ? e.seen + step : 0;
     e.burstT = (e.burstT ?? 0) - step; e.burstCd = (e.burstCd ?? 0) - step;
-    if (watched && e.seen > 0.4 && e.seen < 2.6 && dist > 7) { e.vx = e.vz = 0; e.faceTo(nx, nz, step, 4); e.state = 'move'; return; } // stands still while looked at
+    // Watched from far away it SIDESTEPS instead of freezing solid: the creepy "it stopped" beat
+    // survives, but looking at a stalker is no longer 2.6 s of free, stationary target practice.
+    if (watched && e.seen > 0.4 && e.seen < 2.2) { e.orbit += step * 1.3 * e.circleDir; e.moveToward(player.x - Math.sin(e.orbit) * dist, player.z - Math.cos(e.orbit) * dist, d.speed * 0.95, step); e.faceTo(nx, nz, step, 4); e.state = 'move'; return; }
     if (dist <= A.range && e.cd <= 0 && (e.token || (e.token = g.director.request('melee', e)))) { startWindup(e, g, d.clips.attack, 3.5 / A.windup * 0.3); telegraphCone(e, g, A.range + 0.6, A.cone); return; }
-    const rush = !watched || dist < 7 || e.seen > 2.6; e.state = rush ? 'rush' : 'move';
-    if (rush && e.burstT <= 0 && e.burstCd <= 0 && dist > 4 && dist < 16) { e.burstT = 1.0; e.burstCd = 2.6; }
-    const sp = rush ? (e.burstT > 0 ? d.sprint : d.sprint * 0.62) : d.speed;
-    if (e.token || dist > 3.5) { e.moveToward(player.x, player.z, sp, step); }
-    else { // no token: circle at 3.5–4 m and posture
-      e.orbit += step * 0.6 * e.circleDir; const tx = player.x - Math.sin(e.orbit) * 3.8, tz = player.z - Math.cos(e.orbit) * 3.8; e.moveToward(tx, tz, d.speed * 0.8, step); e.faceTo(nx, nz, step, 6);
+    const fleeing = -(player.vx * nx + player.vz * nz) > 1.5;
+    const rush = !watched || dist < 8 || e.seen > 2.2; e.state = rush ? 'rush' : 'move';
+    // the sprint burst fires when the player RUNS, not on a blind timer: retreating is what starts the chase
+    if (rush && e.burstT <= 0 && e.burstCd <= 0 && dist > 3 && dist < 18 && (fleeing || Math.random() < 0.012)) { e.burstT = 1.3; e.burstCd = 2.2; }
+    let sp = rush ? (e.burstT > 0 ? d.sprint : d.sprint * 0.82) : d.speed;
+    sp = chaseSpeed(sp, player, nx, nz);
+    if (e.token || dist > 3.5) { e.moveToward(leadX(player, dist, sp), leadZ(player, dist, sp), sp, step); }
+    else { // no token: get IN FRONT of the player instead of politely orbiting behind them
+      e.orbit += step * 0.8 * e.circleDir; e.moveToward(flankX(e, player, 3.4), flankZ(e, player, 3.4), chaseSpeed(d.speed * 1.2, player, nx, nz), step); e.faceTo(nx, nz, step, 6);
       if (e.cd <= 0 && (e.token = g.director.request('melee', e))) e.cd = 0.2;
     }
   },
@@ -160,9 +181,11 @@ export const BRAINS = {
     const d = e.def, A = d.attack; e.cd -= step;
     if (e.state === 'windup') { e.windup -= step; if (e.windup > A.windup * 0.4) { e.faceTo(nx, nz, step, 8); if (e.decal != null) g.decals.move(e.decal, e.x + Math.sin(e.face) * A.range * 0.5, e.z + Math.cos(e.face) * A.range * 0.5, -e.face); } if (e.windup <= 0) { e.state = 'lunge'; e.stT = 0; e.lx = Math.sin(e.face); e.lz = Math.cos(e.face); e.hitDone = false; g.audio.play('sfx_crawler_screech', { x: e.x, z: e.z, vol: 0.9 }); if (e.decal != null) { g.decals.kill(e.decal); e.decal = null; } } return; }
     if (e.state === 'lunge') { e.stT += step; const sp = A.lunge; e.vx = e.lx * sp; e.vz = e.lz * sp; e.x += e.vx * step; e.z += e.vz * step; e.inner.position.y = -e.proto.minY * e.proto.baseScale + Math.sin(clamp(e.stT / 0.5, 0, 1) * Math.PI) * 1.2; if (!e.hitDone && Math.hypot(player.x - e.x, player.z - e.z) < e.r + player.r + 0.3) { e.hitDone = true; player.hurt(A.dmg, e.lx, e.lz, e.key); } if (e.stT > 0.5) { e.state = 'stun'; e.stT = 0; e.inner.position.y = -e.proto.minY * e.proto.baseScale; e.vx = e.vz = 0; e.releaseToken(); } return; }
-    if (e.state === 'stun') { e.stT += step; if (e.stT > 0.6) { e.state = 'move'; e.cd = rnd(1.5, 2.5); } return; }
+    if (e.state === 'stun') { e.stT += step; if (e.stT > 0.45) { e.state = 'move'; e.cd = rnd(0.9, 1.7); } return; }
     if (dist < A.range && dist > 2 && e.cd <= 0 && (e.token || (e.token = g.director.request('melee', e)))) { startWindup(e, g, d.clips.attack, 2.37 / A.windup * 0.35); const col = _c.set(RED); e.decal = g.decals.add(e.x + nx * A.range * 0.5, e.z + nz * A.range * 0.5, { type: D.LINE, size: A.range * 1.05, rot: -Math.atan2(nx, nz), color: col, life: A.windup + 0.1, alpha: 0.5, fadeIn: 0.1 }); return; }
-    e.orbit += step * 1.1 * e.circleDir; const rr = 4.5; const tx = player.x - Math.sin(e.orbit) * rr, tz = player.z - Math.cos(e.orbit) * rr; e.state = 'rush'; e.moveToward(dist > 7 ? player.x : tx, dist > 7 ? player.z : tz, d.speed, step); if (dist < 6) e.faceTo(nx, nz, step, 6);
+    e.orbit += step * 1.1 * e.circleDir; const rr = 4.2; e.state = 'rush'; const sp = chaseSpeed(d.speed, player, nx, nz);
+    if (dist > 8) e.moveToward(leadX(player, dist, sp), leadZ(player, dist, sp), sp, step); else e.moveToward(flankX(e, player, rr), flankZ(e, player, rr), sp, step);
+    if (dist < 7) e.faceTo(nx, nz, step, 6);
   },
   // Rotter: relentless shamble, lunge-grab with cone
   shambler(e, step, player, dist, nx, nz, g) {
@@ -170,29 +193,52 @@ export const BRAINS = {
     if (e.state === 'windup') { meleeWindup(e, step, player, dist, nx, nz, g); return; }
     if (e.state === 'attack') { e.stT += step; if (e.stT > 1.0) { e.state = 'move'; e.cd = rnd(1.0, 2.0); e.releaseToken(); } return; }
     if (dist <= A.range && e.cd <= 0 && (e.token || (e.token = g.director.request('melee', e)))) { startWindup(e, g, d.clips.attack, 2.83 / A.windup * 0.3); telegraphCone(e, g, A.range + 0.5, A.cone); return; }
-    if (e.token || dist > 3) { const rush = dist < 5 && dist > A.range && !e.legless; e.state = rush ? 'rush' : 'move'; e.moveToward(player.x, player.z, rush ? d.sprint : speed, step); }
-    else { e.orbit += step * 0.4 * e.circleDir; e.moveToward(player.x - Math.sin(e.orbit) * 3.2, player.z - Math.cos(e.orbit) * 3.2, speed, step); e.faceTo(nx, nz, step, 6); if (e.cd <= 0 && (e.token = g.director.request('melee', e))) e.cd = 0.2; }
+    if (e.token || dist > 3) { const rush = dist < 7 && dist > A.range && !e.legless; e.state = rush ? 'rush' : 'move'; const sp = chaseSpeed(rush ? d.sprint : speed, player, nx, nz); e.moveToward(leadX(player, dist, sp), leadZ(player, dist, sp), sp, step); }
+    else { e.orbit += step * 0.5 * e.circleDir; e.moveToward(flankX(e, player, 3.0), flankZ(e, player, 3.0), chaseSpeed(speed * 1.2, player, nx, nz), step); e.faceTo(nx, nz, step, 6); if (e.cd <= 0 && (e.token = g.director.request('melee', e))) e.cd = 0.2; }
   },
   // Bloater: keeps 8–12 m, lobs bile that leaves acid puddles
   spitter(e, step, player, dist, nx, nz, g) {
-    const d = e.def, A = d.attack; e.cd -= step;
-    if (e.state === 'windup') { e.windup -= step; e.faceTo(nx, nz, step, 6); if (e.windup <= 0) { e.state = 'move'; e.cd = A.cooldown; e.releaseToken(); const tx = player.x + player.vx * 0.6, tz = player.z + player.vz * 0.6; const dx = tx - e.x, dz = tz - e.z; const dd = Math.hypot(dx, dz) || 1; const T = 1.1; g.projectiles.fireEnemy({ x: e.x, y: e.y + e.height * 0.7, z: e.z, vx: dx / T, vy: 4.5 + e.height * 0.7 / T, vz: dz / T, life: 3, dmg: A.dmg, gravity: 9, color: 0x6aff2a, puddle: A.puddle, r: 0.45 }); g.audio.play('sfx_bloater_spit', { x: e.x, z: e.z, vol: 0.9 }); if (e.decal != null) { g.decals.kill(e.decal); e.decal = null; } } return; }
-    if (dist < A.range && e.cd <= 0 && (e.token || (e.token = g.director.request('ranged', e)))) { startWindup(e, g, d.clips.attack, 3.5 / A.windup * 0.3); const tx = player.x + player.vx * 0.6, tz = player.z + player.vz * 0.6; e.decal = g.decals.add(tx, tz, { type: D.RING, size: A.puddle * 2.2, color: _c.set(0x8aff3a), life: A.windup + 1.2, alpha: 0.6, fadeIn: 0.2 }); return; }
-    e.state = 'move'; if (dist > 11) e.moveToward(player.x, player.z, d.speed, step); else if (dist < 7) e.moveToward(e.x - nx * 3, e.z - nz * 3, d.speed, step); else { e.faceTo(nx, nz, step, 4); e.vx = e.vz = 0; }
+    const d = e.def, A = d.attack; e.cd -= step; const keep = A.keep || [7, 11];
+    if (e.state === 'windup') {
+      e.windup -= step; e.faceTo(nx, nz, step, 6);
+      if (e.windup <= 0) {
+        e.state = 'move'; e.cd = A.cooldown; e.releaseToken();
+        const T = 1.05, shots = A.shots || 1;
+        for (let i = 0; i < shots; i++) {
+          const off = shots > 1 ? (i - (shots - 1) / 2) * (A.spread || 2.4) : 0;
+          const tx = e.aimX - nz * off, tz = e.aimZ + nx * off; const dx = tx - e.x, dz = tz - e.z;
+          g.projectiles.fireEnemy({ x: e.x, y: e.y + e.height * 0.7, z: e.z, vx: dx / T, vy: 4.5 + e.height * 0.7 / T, vz: dz / T, life: 3, dmg: A.dmg, gravity: 9, color: A.color || 0x6aff2a, puddle: A.puddle, r: 0.45 });
+        }
+        g.audio.play(A.spitSfx || 'sfx_bloater_spit', { x: e.x, z: e.z, vol: 0.9 });
+        if (e.decal != null) { g.decals.kill(e.decal); e.decal = null; }
+      } return;
+    }
+    if (dist < A.range && dist > 2.5 && e.cd <= 0 && (e.token || (e.token = g.director.request('ranged', e)))) {
+      // lead by most of the shell's flight time: running in a straight line away is no longer safe
+      e.aimX = player.x + player.vx * 0.85; e.aimZ = player.z + player.vz * 0.85;
+      startWindup(e, g, d.clips.attack, 3.5 / A.windup * 0.3);
+      e.decal = g.decals.add(e.aimX, e.aimZ, { type: D.RING, size: (A.ring || A.puddle || 2.2) * 2.2, color: _c.set(A.color || 0x8aff3a), life: A.windup + 1.2, alpha: 0.6, fadeIn: 0.2 });
+      return;
+    }
+    e.state = 'move';
+    // hold a firing line: chase if the player runs out of range, give ground if they close in
+    if (dist > keep[1]) e.moveToward(player.x, player.z, chaseSpeed(d.speed, player, nx, nz), step);
+    else if (dist < keep[0]) e.moveToward(e.x - nx * 3, e.z - nz * 3, d.speed * 1.3, step);
+    else { e.orbit += step * 0.5 * e.circleDir; e.moveToward(player.x - Math.sin(e.orbit) * dist, player.z - Math.cos(e.orbit) * dist, d.speed * 0.6, step); e.faceTo(nx, nz, step, 4); }
   },
   // Reaper shark: circles outside the light, then rushes along a telegraphed line
   charger(e, step, player, dist, nx, nz, g) {
     const d = e.def, A = d.attack; e.cd -= step; const prevFace = e.face;
     if (e.state === 'windup') { e.windup -= step; if (e.windup > A.windup * 0.4) { e.faceTo(nx, nz, step, 5); if (e.decal != null) g.decals.move(e.decal, e.x + Math.sin(e.face) * A.range * 0.5, e.z + Math.cos(e.face) * A.range * 0.5, -e.face); } e.ty = 1.0; if (e.windup <= 0) { e.state = 'lunge'; e.stT = 0; e.lx = Math.sin(e.face); e.lz = Math.cos(e.face); e.hitDone = false; g.audio.play('sfx_shark_rush', { x: e.x, z: e.z, vol: 1 }); if (e.decal != null) { g.decals.kill(e.decal); e.decal = null; } } e.turnRate = 0; return; }
-    if (e.state === 'lunge') { e.stT += step; const sp = d.sprint; e.vx = e.lx * sp; e.vz = e.lz * sp; e.x += e.vx * step; e.z += e.vz * step; e.ty = 0.9; if (!e.hitDone && Math.hypot(player.x - e.x, player.z - e.z) < e.r + player.r + 0.4) { e.hitDone = true; if (player.hurt(A.dmg, e.lx, e.lz, e.key)) { g.audio.play('sfx_shark_bite', { vol: 1 }); g.bloodScreen(); } } if (Math.random() < 0.6) e.ctx.particlesAdd.one(e.x, e.y + 0.5, e.z, { type: P.BUBBLE, color: _c.set(0xbfe8ff), life: 1.2, size: 0.15, sizeEnd: 0.3, vx: rnd(-1, 1), vy: 1.5, vz: rnd(-1, 1) }); if (e.stT > 1.1) { e.state = 'move'; e.cd = rnd(2.2, 3.4); e.releaseToken(); e.ty = rnd(d.swim[0], d.swim[1]); } e.turnRate = 0; return; }
-    if (dist < A.range && dist > 4 && e.cd <= 0 && (e.token || (e.token = g.director.request('melee', e)))) { startWindup(e, g, null); e.windup = A.windup; e.decal = g.decals.add(e.x + nx * A.range * 0.5, e.z + nz * A.range * 0.5, { type: D.LINE, size: A.range * 1.05, rot: -Math.atan2(nx, nz), color: _c.set(RED), life: A.windup + 0.1, alpha: 0.5, fadeIn: 0.1 }); g.audio.play('sfx_shark_windup', { x: e.x, z: e.z, vol: 0.9 }); return; }
-    e.orbit += step * 0.55 * e.circleDir; const rr = 9 + Math.sin(e.orbit * 2) * 1.5; e.state = 'move'; const tx = player.x - Math.sin(e.orbit) * rr, tz = player.z - Math.cos(e.orbit) * rr; e.moveToward(tx, tz, d.speed, step); e.turnRate = angDiff(prevFace, e.face) / step;
+    if (e.state === 'lunge') { e.stT += step; const sp = d.sprint; e.vx = e.lx * sp; e.vz = e.lz * sp; e.x += e.vx * step; e.z += e.vz * step; e.ty = 0.9; if (!e.hitDone && Math.hypot(player.x - e.x, player.z - e.z) < e.r + player.r + 0.4) { e.hitDone = true; if (player.hurt(A.dmg, e.lx, e.lz, e.key)) { g.audio.play('sfx_shark_bite', { vol: 1 }); g.bloodScreen(); } } if (Math.random() < 0.6) e.ctx.particlesAdd.one(e.x, e.y + 0.5, e.z, { type: P.BUBBLE, color: _c.set(0xbfe8ff), life: 1.2, size: 0.15, sizeEnd: 0.3, vx: rnd(-1, 1), vy: 1.5, vz: rnd(-1, 1) }); if (e.stT > 1.1) { e.state = 'move'; e.cd = rnd(1.5, 2.5); e.releaseToken(); e.ty = rnd(d.swim[0], d.swim[1]); } e.turnRate = 0; return; }
+    if (dist < A.range && dist > 3 && e.cd <= 0 && (e.token || (e.token = g.director.request('melee', e)))) { startWindup(e, g, null); e.windup = A.windup; e.decal = g.decals.add(e.x + nx * A.range * 0.5, e.z + nz * A.range * 0.5, { type: D.LINE, size: A.range * 1.05, rot: -Math.atan2(nx, nz), color: _c.set(RED), life: A.windup + 0.1, alpha: 0.5, fadeIn: 0.1 }); g.audio.play('sfx_shark_windup', { x: e.x, z: e.z, vol: 0.9 }); return; }
+    e.orbit += step * 0.7 * e.circleDir; const rr = 7.5 + Math.sin(e.orbit * 2) * 1.5; e.state = 'move'; const tx = flankX(e, player, rr), tz = flankZ(e, player, rr); e.moveToward(tx, tz, chaseSpeed(d.speed, player, nx, nz), step); e.turnRate = angDiff(prevFace, e.face) / step;
   },
   // Lantern jelly: drifts toward the player, shock ring
   drift(e, step, player, dist, nx, nz, g) {
     const d = e.def, A = d.attack; e.cd -= step;
     if (e.state === 'windup') { e.windup -= step; if (e.windup <= 0) { e.state = 'move'; e.cd = A.cooldown; e.releaseToken(); if (dist < A.range + player.r) player.hurt(A.dmg, nx, nz, e.key); g.audio.play('sfx_jelly_zap', { x: e.x, z: e.z, vol: 1 }); e.ctx.particlesAdd.one(e.x, 0.3, e.z, { type: P.RING, color: _c.set(0xd060ff), life: 0.4, size: 1, sizeEnd: A.range * 2.2, vx: 0, vy: 0, vz: 0 }); e.ctx.particlesAdd.burst(e.x, e.y, e.z, { n: 24, type: P.SPARK, color: _c.set(0xe0a0ff), speed: 6, life: 0.4, size: 0.15, stretch: 0.8 }); if (e.decal != null) { g.decals.kill(e.decal); e.decal = null; } } return; }
     if (dist < A.range && e.cd <= 0 && (e.token || (e.token = g.director.request('ranged', e)))) { e.state = 'windup'; e.windup = A.windup; e.vx = e.vz = 0; e.decal = g.decals.add(e.x, e.z, { type: D.RING, size: A.range * 2.2, color: _c.set(0xd060ff), life: A.windup + 0.1, alpha: 0.6, fadeIn: 0.15 }); g.audio.play('sfx_jelly_charge', { x: e.x, z: e.z, vol: 0.8 }); return; }
-    e.state = 'move'; e.moveToward(player.x, player.z, d.speed, step); e.ty = d.swim[0] + Math.sin(g.time * 0.7 + e.orbit) * 0.8 + 1;
+    e.state = 'move'; e.moveToward(leadX(player, dist, d.speed), leadZ(player, dist, d.speed), chaseSpeed(d.speed, player, nx, nz), step); e.ty = d.swim[0] + Math.sin(g.time * 0.7 + e.orbit) * 0.8 + 1;
   },
 };

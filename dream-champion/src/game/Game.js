@@ -74,7 +74,7 @@ export class Game {
   title() {
     this.state = 'title'; hud.hide(); this.cancel(); this.clearHome(); this.director.clearAll(); this.projectiles.clear(); this.bossActive = false; this.input.unlockMouse();
     const p = this.player; p.setWorld(this.world.THEME); p.x = 0; p.z = 0; p.faceYaw = Math.PI * 0.15; p.anim.stopAll(); p.anim.play('look_around', 0); p.combatT = 0; p.lampOn = false;
-    this.titleT = 0; this.assets.prefetch('home');
+    this.titleT = 0; this.assets.prefetch('intro'); this.assets.prefetch('home');
     this.audio.setMusic({ bed: 'title' }, 2); this.audio.setMusicMix({ bed: 1 }, 1);
     fxdom.fade(0, 1200);
     panels.title(a => this.onTitle(a), { settings: save.data.settings, pickDifficulty: !save.data.settings.seenIntro });
@@ -82,7 +82,10 @@ export class Game {
   onTitle(a) {
     if (a.startsWith('difficulty:')) { this.difficulty = a.split(':')[1]; save.data.settings.difficulty = this.difficulty; save.write(); return; }
     if (a === 'settings') { panels.settings(x => { if (x === 'back') panels.title(b => this.onTitle(b), { settings: save.data.settings }); else this.applySetting(x); }, save.data.settings); return; }
-    if (a === 'start') { this.audio.ensure(); this.audio.play('sfx_ui', { ui: true }); this.beginAdventure(); }
+    if (a === 'start') { this.audio.ensure(); this.audio.play('sfx_ui', { ui: true });
+      const iv = this.assets.manifest.groups.intro?.find(x => x.type === 'video');
+      if (iv) this.primeVideo(this.assets.url(iv.url));   // must start inside the tap for iOS
+      this.beginAdventure(); }
   }
   async beginAdventure() {
     panels.hide(); const first = !save.data.settings.seenIntro;
@@ -90,55 +93,17 @@ export class Game {
     if (first) { save.data.settings.seenIntro = true; save.write(); await this.blasterWake(); await panels.coldOpen(COPY.coldOpen); this.audio.play('sfx_whisper_knox', { vol: 0.8 }); await this.enterWorld('forest'); }
     else { await this.blasterWake(); this.map(); }
   }
-  // ---------- opening: mum and dad's room ----------
+  // ---------- opening: Knox climbs in with mum and dad (generated film, bookends the ending) ----------
   async bedtime() {
-    const p = this.player;
+    const vid = this.assets.manifest.groups.intro?.find(a => a.type === 'video');
+    if (!vid) return;
     this.state = 'cine'; this.cancel(); panels.hide(); hud.hide(); this.input.reset(); this.input.unlockMouse();
-    this._cineSkip = false; this._cineWaiters = [];
-    const skip = () => this.skipCine();
-    addEventListener('pointerdown', skip); addEventListener('keydown', skip);
-    hud.ghost(COPY.ghost.skip); this.after(2.0, () => hud.ghost(null), 'cine');
-    fxdom.fade(1, 600); await new Promise(r => setTimeout(r, 650));
-    await this.assets.loadGroup('home');
-    this.unloadWorld();
-    const W = WORLDS.parents; const env = W.build(this.ctx, this.renderer.tier);
-    this.scene.add(env.group); this.world = { key: 'parents', THEME: W.THEME, env }; this.worldKey = 'parents';
-    this.sky.apply(W.THEME.sky); this.lighting.apply(W.THEME.rig);
-    Object.assign(this.renderer.grade, { exposure: W.THEME.grade.exposure, saturation: W.THEME.grade.saturation, contrast: W.THEME.grade.contrast, bloom: W.THEME.grade.bloom, vignette: W.THEME.grade.vignette });
-    this.renderer.grade.lift.fromArray(W.THEME.grade.lift); this.renderer.grade.gain.fromArray(W.THEME.grade.gain);
-    this.renderer.fx.underwater = 0; this.sky.uniforms.underwater.value = 0; this.audio.setWorldFilter(false);
-    this.heroLightsOff(); this.audio.setMusic({ bed: 'home' }, 2); this.audio.setMusicMix({ bed: 1 }, 1.5);
-    // Knox stands at the near edge of the bed, no blaster yet
-    const bed = env.bedPos || { x: 0, y: 0.66, z: 0 };
-    p.gear.setVisible(false); p.lampOn = false; p.root.visible = true; p.alive = true;
-    p.anim.stopAll(); p.anim.play('look_around', 0);
-    p.root.position.set(bed.x + 0.05, 0, bed.z + 1.5); p.root.rotation.y = Math.PI;
-    p.x = p.root.position.x; p.z = p.root.position.z; p.y = 0;
-    this.lighting.setLamp(p.root.position, _v.set(0, 0, 1), false);
-    this.cine = { kind: 'bedtime', t: 0, dur: 15, bed };
-    fxdom.fade(0, 1400);
-    await this.wait(1.9);
-    // climbs in: wake_up run backwards is exactly 'lies down from sitting'
-    this.audio.play('sfx_step_grave', { vol: 0.3, vary: 0.2 });
-    const from = p.root.position.clone(), ry0 = p.root.rotation.y;
-    this.poseOnBed(p, bed, 0.07, 0);                          // head to the headboard, flat, clear of the blanket
-    const to = p.root.position.clone(), ry1 = p.root.rotation.y;
-    p.root.position.copy(from); p.root.rotation.y = ry0;
-    this.cine.climb = { from, to, ry0, ry1, t: 0, dur: 1.5 };
-    const a = p.anim.play('wake_up', 0.35);
-    if (a) { a.paused = false; a.time = (a.getClip().duration || 3.5) - 0.01; a.setEffectiveTimeScale(-0.85); a.clampWhenFinished = true; a.setLoop(THREE.LoopOnce, 1); }
-    await this.wait(3.2);
-    p.anim.play('sleep', 0.7);
-    await this.wait(1.0); this.anchorHips(p, bed.y + 0.17);   // the sleep clip carries a baked vertical offset
-    await this.wait(1.5);
-    // the room turns on him
-    this.audio.play('sfx_whisper_knox', { vol: 0.75 });
-    this.renderer.fx.desat = 0.35;
-    await this.wait(1.7);
-    fxdom.fade(1, 1200); await this.wait(1.4);
-    removeEventListener('pointerdown', skip); removeEventListener('keydown', skip); hud.ghost(null);
-    this.cine = null; this.renderer.fx.desat = 0; this._cineSkip = false;
-    this.scene.remove(env.group); env.dispose(); this.world = null; this.worldKey = null;
+    fxdom.fade(1, 500); await new Promise(r => setTimeout(r, 520));
+    this.audio.setMusic(null, 1.2);
+    let ok = false;
+    try { ok = await this.playVideo(this.assets.url(vid.url)); } catch (_) { ok = false; }
+    if (!ok) { fxdom.fade(0, 300); }          // couldn't play: skip the beat rather than show a broken scene
+    this.cine = null; this.state = 'title';
   }
   wait(sec) {
     if (this._cineSkip) return Promise.resolve();

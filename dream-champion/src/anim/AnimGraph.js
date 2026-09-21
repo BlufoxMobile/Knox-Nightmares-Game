@@ -1,7 +1,7 @@
 // Animation state machine with crossfades, upper/lower body layering via track masks, one-shots and additive recoil.
 import * as THREE from 'three';
 
-const UPPER = new Set(['Spine01', 'Spine02', 'neck', 'Head', 'head_end', 'headfront', 'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand', 'RightShoulder', 'RightArm', 'RightForeArm', 'RightHand', 'Spine1', 'Spine2', 'Neck', 'LeftHandIndex1', 'RightHandIndex1']);
+const UPPER = new Set(['Spine01', 'Spine02', 'neck', 'Head', 'head_end', 'headfront', 'LeftShoulder', 'LeftArm', 'LeftForeArm', 'LeftHand', 'RightShoulder', 'RightArm', 'RightForeArm', 'RightHand', 'Spine', 'Spine1', 'Spine2', 'Neck', 'LeftHandIndex1', 'RightHandIndex1']);
 const boneOf = t => t.name.split('.')[0].replace(/^.*\|/, '');
 
 export function maskClip(clip, keepUpper, suffix) {
@@ -17,7 +17,14 @@ export class AnimGraph {
   }
   has(n) { return !!this.clips[n]; }
   action(name, opts = {}) {
-    const key = name + (opts.mask || ''); if (this.actions[key]) return this.actions[key];
+    const key = name + (opts.mask || '');
+    // A cached action that stopAll() (-> mixer.stopAllAction) has stopped is DEACTIVATED: the mixer stops
+    // ticking it, so reset()/fadeIn()/setEffectiveWeight() on it do nothing at all and the skeleton freezes
+    // in whatever pose it last held. Every base clip (idle/combat_idle/run_gun/...) is created once at boot
+    // and then re-fetched from this cache, so after the first stopAll the ONLY thing still driving bones was
+    // the upper-body overlay -- the legs had no track writing to them. Re-arm the action before handing it back.
+    const hit = this.actions[key];
+    if (hit) { if (!hit.isRunning()) { hit.enabled = true; hit.paused = false; hit.setEffectiveWeight(0); hit.play(); } return hit; }
     let clip = this.clips[name]; if (!clip) return null;
     if (opts.mask === 'upper') clip = maskClip(clip, true, '_U'); else if (opts.mask === 'lower') clip = maskClip(clip, false, '_L');
     const a = this.mixer.clipAction(clip); a.enabled = true; a.setEffectiveWeight(0); a.play();
@@ -53,5 +60,7 @@ export class AnimGraph {
     a.reset(); a.setLoop(THREE.LoopOnce, 1); a.setEffectiveWeight(1); a.setEffectiveTimeScale(timeScale); a.fadeIn(fade); this.upShot = { action: a }; return a;
   }
   update(dt) { this.mixer.update(dt); }
-  stopAll() { this.mixer.stopAllAction(); this.current = null; this.upper = null; this.oneShot = null; this.upShot = null; }
+  // stopAll deactivates every action; action() re-arms them on the next fetch. Zero the weights here so a
+  // re-armed action can never come back at a stale weight before its caller sets one.
+  stopAll() { this.mixer.stopAllAction(); for (const k in this.actions) { this.actions[k].setEffectiveWeight(0); } this.current = null; this.upper = null; this.oneShot = null; this.upShot = null; }
 }
