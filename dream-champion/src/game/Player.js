@@ -58,6 +58,9 @@ export class Player {
     this.swim = !!theme.underwater; this.ammoKey = theme.ammo; this.ammo = AMMO[theme.ammo]; this.gear.blaster.glowMat.emissive.set(this.ammo.color); this.gear.blaster.glowMat.color.set(this.ammo.color);
     this.hp = this.maxhp; this.ult = 0; this.combo = 1; this.comboT = 0; this.alive = true; this.dead = false; this.roll.charges = ROLL.charges; this.iframes = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
     this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.cam.occl = undefined; this.locked = null; this.steering.active = false; this.moveYaw = null; this.cam.autoT = 0;
+    this.roll.t = -1; this.roll.refill = 0; this.charging = false; this.chargeT = 0;
+    this.fireCd = 0; this.aimT = 0; this.aimW = 0; this.tapLock = 0; this.lockT = 0;
+    this.hurtT = 0; this.trauma = 0; this.recoil = 0; this.ultActive = 0;
     this.anim.stopAll(); this.anim.play(this.swim ? 'swim_idle' : 'combat_idle', 0); this.root.visible = true; this.combatT = 0;
     this.y = this.swim ? 0.35 : 0;
   }

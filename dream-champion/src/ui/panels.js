@@ -146,18 +146,15 @@ export const panels = {
     render('pause', 'dim', html, fn);
   },
 
-  // line: string | string[] (one picked at random)   Actions: 'retry' | 'map'
-  wake(fn, line) {
+  // The wake-up film finishes before this card appears. Actions: retry | map.
+  wake(fn) {
     const W = COPY.wake;
-    const l = Array.isArray(line) ? line[(Math.random() * line.length) | 0] : (line || W.lines[(Math.random() * W.lines.length) | 0]);
-    const html =
-      '<div class="wakep">' +
-        '<h1>' + esc(W.head) + '</h1>' +
-        '<p class="body">' + br(W.body) + '</p>' +
-        '<p class="line">' + esc(l) + '</p>' +
-        '<div class="row">' + btn('retry', W.back, 'pulse') + btn('map', W.other, 'alt small') + '</div>' +
+    const html = '<div class="wakep wake-retry">' +
+      '<h1>' + esc(W.head) + '</h1>' +
+      '<p class="body">' + esc(W.body) + '</p>' +
+      '<div class="row">' + btn('retry', W.back, 'pulse') + btn('map', W.other, 'alt small') + '</div>' +
       '</div>';
-    render('wake', 'dim wake', html, fn);
+    render('wake', 'dim wake wake-result', html, fn);
   },
 
   // a load failed (bad signal in the car). Actions: 'retry' | 'map'

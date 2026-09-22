@@ -20,6 +20,7 @@ import { COPY } from './data/copy.js';
 import { hud } from '../ui/hud.js';
 import { panels } from '../ui/panels.js';
 import { fxdom } from '../ui/fxdom.js';
+import { showWakeFilm } from '../ui/wake-film.js';
 import { clamp, rnd, pick, lerp, damp } from '../core/math.js';
 
 BRAINS.boss = (e, step, player, dist, nx, nz, g) => BOSS_BRAINS[e.key](e, step, player, dist, nx, nz, g);
@@ -61,6 +62,7 @@ export class Game {
   unloadWorld() { this.clearHome(); if (!this.world) return; this.director.disposeAll(); this.scene.remove(this.world.env.group); this.world.env.dispose(); this.world = null; }
   // undo anything a cinematic hid, so no path can strand the player without a world or a blaster
   restoreScene() {
+    this.wakeFilm?.dispose(); this.wakeFilm = null;
     const p = this.player; if (p) { p.gear.setVisible(true); p.root.visible = true; }
     if (this.world && this.world.env.group) this.world.env.group.visible = true;
     this.cine = null; this.renderer.fx.hurt = 0; this.renderer.fx.desat = 0; this.bloodT = 0; fxdom.letterbox(false); this.heroLightsOff();
@@ -136,7 +138,7 @@ export class Game {
     panels.hide(); this.state = 'loading'; fxdom.fade(1, 500); await new Promise(r => setTimeout(r, 520)); hud.hide();
     const load = document.getElementById('load'); load.classList.remove('out'); load.querySelector('#loadmsg').textContent = COPY.worlds[key].name;
     await this.loadWorld(key, f => { load.querySelector('#loadfill').style.width = (f * 100).toFixed(0) + '%'; });
-    load.classList.add('out'); const p = this.player; p.setWorld(this.world.THEME); p.lampOn = true; this.heroLightsOff(); this.director.setup(key); this.stats = { kills: 0, headshots: 0, streak: 1, t0: this.time, secret: false }; this.hpMul = (this.difficulty === 'brutal' ? 1.35 : 1); this.bossActive = false; this.killTimes = []; this.lastTut = 0;
+    load.classList.add('out'); const p = this.player; p.setWorld(this.world.THEME); p.lampOn = true; this.heroLightsOff(); this.director.setup(key); p.kills = 0; p.headshots = 0; p.bestStreak = 1; this.stats = { kills: 0, headshots: 0, streak: 1, t0: this.time, secret: false }; this.hpMul = (this.difficulty === 'brutal' ? 1.35 : 1); this.bossActive = false; this.killTimes = []; this.lastTut = 0;
     hud.reset && hud.reset(); hud.show(); hud.setHP(p.hp, p.maxhp); hud.setKills(0); hud.setUlt(0); hud.setDash(2, 2); hud.boss(null); hud.setWorld(this.world.THEME.name, ''); hud.reticle('free');
     this.audio.setMusic(this.world.THEME.music, 1.5); this.audio.setMusicMix({ bed: 1 }, 0.5);
     this.state = 'play'; this.input.reset(); fxdom.fade(0, 900); this.director.startLevel(); this.input.lockMouse(); this.wake(true); this.renderer.dyn.settle && this.renderer.dyn.settle(3);
@@ -304,29 +306,31 @@ export class Game {
     this.state = 'wake'; this.input.reset(); this.input.unlockMouse(); this.loop.slowMo(0.3, 1.2); hud.hideUI(true); this.audio.setMusicMix({ bed: 0.3 }, 1); this.audio.play('sfx_gasp', { vol: 1, delay: 0.9 }); save.data.stats.wakes++; save.write();
     this.after(0.9, () => { fxdom.tear(); fxdom.cut(1); }, 'down');
     this.after(1.3, async () => {
-      // Losing a level is the emotional beat this whole game is built around, so it gets the filmed version:
-      // Knox jolts awake in his parents' room, wipes his forehead and settles back down safe between them.
-      // The in-engine bedroom below stays as the fallback -- if the video is missing or the browser refuses
-      // to play it, show that rather than a black screen.
+      if (this.state !== 'wake') return;
       const wv = this.assets.manifest.groups.wake?.find(a => a.type === 'video');
+      hud.hide(); this.renderer.fx.hurt = 0; this.renderer.fx.desat = 0;
+      this.bloodT = 0; p.hurtT = 0; hud.low(false);
       if (wv) {
-        let ok = false;
-        try { ok = await this.playVideo(this.assets.url(wv.url)); } catch (_) { ok = false; }
-        if (ok) { this.cine = null; fxdom.cut(0); panels.wake(a => this.onWake(a), pick(COPY.wake.lines)); return; }
+        this.wakeFilm?.dispose();
+        const film = showWakeFilm(document.getElementById('app'), this.assets.url(wv.url), {
+          muted: this.audio.muted, onVisible: () => fxdom.cut(0)
+        });
+        this.wakeFilm = film;
+        await film.finished;
+        if (this.state !== 'wake' || this.wakeFilm !== film) { film.dispose(); return; }
       }
-      // bedroom scene: Knox sits up in bed
-      await this.assets.loadGroup('home'); const W = WORLDS.home; const keep = this.world; this.homeEnv = W.build(this.ctx, this.renderer.tier); this.scene.add(this.homeEnv.group); keep.env.group.visible = false; this.director.enemies.forEach(e => e.root.visible = false);
-      this.sky.apply(W.THEME.sky); this.lighting.apply(W.THEME.rig); this.renderer.fx.underwater = 0; this.sky.uniforms.underwater.value = 0; this.audio.setWorldFilter(false); this.renderer.fx.hurt = 0; this.renderer.fx.desat = 0; this.bloodT = 0; p.hurtT = 0; hud.low(false);
-      const bed = this.homeEnv.bedPos || { x: 0, y: 0.5, z: 0 }; p.x = bed.x; p.z = bed.z; p.y = bed.y; p.px = p.x; p.pz = p.z; p.anim.stopAll(); p.anim.play('wake_up', 0); this.poseOnBed(p, bed); p.lampOn = false; this.lighting.setLamp(p.root.position, _v.set(0, 0, 1), false); p.gear.setVisible(false);
-      this.cine = { kind: 'wake', t: 0, dur: 3.5 }; hud.hide(); fxdom.cut(0); this.audio.play('sfx_heartbeat', { vol: 1 }); this.after(0.9, () => this.audio.play('sfx_heartbeat', { vol: 0.8 }), 'down'); this.after(1.9, () => this.audio.play('sfx_heartbeat', { vol: 0.6 }), 'down');
-      this.after(2.2, () => panels.wake(a => this.onWake(a), pick(COPY.wake.lines)), 'down');
+      // A failed download or denied autoplay must still leave a working retry screen.
+      this.cine = null; fxdom.cut(0); panels.wake(a => this.onWake(a));
     }, 'down');
   }
   onWake(a) {
-    this.cancel(); panels.hide(); const p = this.player; p.gear.setVisible(true); if (this.homeEnv) { this.scene.remove(this.homeEnv.group); this.homeEnv.dispose(); this.homeEnv = null; } this.world.env.group.visible = true; const W = WORLDS[this.worldKey]; this.sky.apply(W.THEME.sky); this.lighting.apply(W.THEME.rig); this.renderer.fx.underwater = W.THEME.underwater ? 1 : 0; this.sky.uniforms.underwater.value = W.THEME.underwater ? 1 : 0; this.audio.setWorldFilter(!!W.THEME.underwater);
-    this.cine = null; p.y = W.THEME.underwater ? 0.35 : 0;
-    if (a === 'retry') { p.setWorld(W.THEME); p.lampOn = true; this.director.onWake(); this.hpMul = Math.max(0.7, (this.difficulty === 'brutal' ? 1.35 : 1) - 0.1 * Math.max(0, this.director.wakesOnWave - 1)); this.state = 'play'; hud.show(); hud.hideUI(false); hud.reset && hud.reset(); hud.setKills(p.kills); hud.setHP(p.hp, p.maxhp); if (this.director.boss && this.director.state === 'boss') { hud.boss(COPY.bosses[W.THEME.boss].name, COPY.bosses[W.THEME.boss].title); hud.bossHP(this.director.boss.hp / this.director.boss.maxhp, false); } fxdom.fade(0, 600); this.audio.setMusicMix(this.director.state === 'boss' ? { boss: 1 } : { bed: 0.5, combat: 0.5 }, 1); this.input.lockMouse(); hud.banner(COPY.cont, 'small'); }
-    else { this.map(); }
+    if (this.state !== 'wake') return;
+    this.cancel(); this.state = 'loading'; // guard against double taps
+    panels.hide(); this.wakeFilm?.dispose(); this.wakeFilm = null;
+    this.clearHome(); this.restoreScene(); this.input.reset();
+    this.loop.timeScale = 1; this.paused = false;
+    if (a === 'retry') this.enterWorld(this.worldKey); // restart this level from wave one
+    else this.map();
   }
   // ---------- ending ----------
   async ending() {

@@ -464,3 +464,17 @@ body.nokb #ctl,body.nokb #stick{display:none}
 @keyframes tear2{0%{opacity:1;transform:translateX(-12px) skewX(12deg)}50%{transform:translateX(9px) skewX(-8deg)}100%{opacity:0;transform:none}}
 @media (prefers-reduced-motion:reduce){.glitch::before,.glitch::after,#hpwrap.heartbeat #hpbar,.btn.pulse,#bUlt.ready{animation:none}}
 @media (max-width:720px){.wcard{padding:9px 10px 32px}.wcard b{font-size:16px;letter-spacing:.03em}.wcard small{letter-spacing:.1em}.wcard .go{letter-spacing:.14em;right:10px}.wcard .num{font-size:26px;left:10px}.mapp .map{gap:8px}.wcard .vs{font-size:12px;letter-spacing:.12em}}
+
+/* Loss film stays behind a readable, bottom-anchored retry card. */
+.wake-film{position:absolute;inset:0;z-index:15;background:#050710}
+.wake-film video{width:100%;height:100%;object-fit:contain;display:block}
+.wake-film button{position:absolute;z-index:1;min-height:48px;border:1px solid #ffffff60;border-radius:12px;background:#101728e8;color:#fff;padding:12px 20px;font:600 16px var(--ui);touch-action:manipulation}
+.wake-film-play{left:50%;top:50%;transform:translate(-50%,-50%)}
+.wake-film-skip{right:calc(var(--sr) + 16px);top:calc(var(--st) + 12px)}
+.wake-film [hidden]{display:none}
+#ov.wake-result{background:linear-gradient(transparent 10%,rgba(5,7,16,.4) 35%,rgba(5,7,16,.96) 100%)}
+.wake-retry{justify-content:flex-end;gap:10px;padding-bottom:calc(var(--sb) + 20px);overflow:auto}
+.wake-retry h1{font-size:clamp(24px,6vh,44px);line-height:1.08;color:#f3f0ff;text-transform:none;text-shadow:0 2px 14px #000;margin:0}
+.wake-retry .body{font-size:clamp(16px,3vh,21px)}
+.wake-retry .row{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:10px}
+.wake-retry .btn{min-width:180px}
