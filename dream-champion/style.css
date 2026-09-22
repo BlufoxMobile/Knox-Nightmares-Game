@@ -478,3 +478,10 @@ body.nokb #ctl,body.nokb #stick{display:none}
 .wake-retry .body{font-size:clamp(16px,3vh,21px)}
 .wake-retry .row{display:flex;flex-wrap:wrap;justify-content:center;gap:12px;margin-top:10px}
 .wake-retry .btn{min-width:180px}
+
+/* Visible thumb target between gestures; the active stick still floats. */
+#stick{display:block;left:calc(var(--sl) + 32px);bottom:calc(var(--sb) + 32px);width:92px;height:92px;margin:0;opacity:.85;border-color:rgba(255,255,255,.65);background:rgba(5,12,24,.48)}
+#stick.on{bottom:auto;opacity:1}
+#stick i{width:36px;height:36px;margin:-18px 0 0 -18px}
+#hud.lefty #stick:not(.on){left:auto;right:calc(var(--sr) + 32px)}
+#ctl button{opacity:.9;background:rgba(5,12,24,.68);border-color:rgba(255,255,255,.65)}
