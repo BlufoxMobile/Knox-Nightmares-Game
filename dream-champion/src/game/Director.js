@@ -51,20 +51,20 @@ export class Director {
   request(kind, e) { const list = this.held[kind]; if (list.includes(e)) return kind; if (list.length >= this.tokens[kind]) return null; list.push(e); return kind; }
   release(kind, e) { const list = this.held[kind]; const i = list.indexOf(e); if (i >= 0) list.splice(i, 1); }
   // ---- flow ----
-  startLevel() { this.waveIdx = -1; this.state = 'prewave'; this.stateT = 2.2; this.game.hud.setWorld(this.game.world.THEME.name, ''); }
+  startLevel() { this.waveIdx = -1; this.state = 'prewave'; this.stateT = this.game.difficulty === 'brutal' ? 2.2 : 4; this.game.hud.setWorld(this.game.world.THEME.name, ''); }
   nextWave() {
     this.waveIdx++; const g = this.game; if (this.waveIdx >= this.waves.length) { this.state = 'breather'; this.stateT = 7; g.hud.banner(COPY.banners.bigger, 'small'); g.audio.setMusicMix({ bed: 1, combat: 0 }, 2); g.spawnChest(); return; }
     const w = this.waves[this.waveIdx]; this.queue = [];
     if (this.waveIdx > this.maxWaveReached) { this.maxWaveReached = this.waveIdx; this.wakesOnWave = 0; }
     // mercy: after two wake-ups on the SAME wave the arena thins out and breathes. The retry loop has
     // to stay forgiving for a ten-year-old -- the difficulty lives in the first attempt, not the fifth.
-    this.mercy = clamp(this.wakesOnWave - 1, 0, 3);
+    this.mercy = clamp(Math.max(this.wakesOnWave - 1, this.game.difficulty === 'brutal' ? 0 : (g.retryCounts?.[this.worldKey] || 0)-1), 0, 3);
     // How many monsters may be winding up an attack at once. Two was the real reason a crowd of twelve
     // felt safe: ten of them were politely queueing.
-    this.tokens.melee = (this.game.difficulty === 'brutal' ? 4 : 3) + (this.waveIdx >= 2 ? 1 : 0) + (this.waveIdx >= 4 ? 1 : 0) - (this.mercy >= 2 ? 1 : 0);
+    this.tokens.melee = (this.game.difficulty === 'brutal' ? 4 : this.waveIdx < 2 ? 2 : 3) + (this.waveIdx >= 2 ? 1 : 0) + (this.waveIdx >= 4 ? 1 : 0) - (this.mercy >= 2 ? 1 : 0);
     this.tokens.ranged = 2 + (this.waveIdx >= 3 ? 1 : 0); for (const [t, n] of w.list) for (let i = 0; i < n; i++) this.queue.push(t); this.queue.sort(() => Math.random() - 0.5);
     // trickle: first wave slower
-    this.spawnGap = ([2.9, 1.9, 1.5, 1.25, 1.1, 0.95][this.waveIdx] ?? 0.95) * (1 + this.mercy * 0.18); this.spawnT = 0.5; this.cap = Math.max(4, w.cap + (g.difficulty === 'brutal' ? 1 : 0) - this.mercy); this.state = 'wave'; this.stateT = 0; this.killsThisWave = 0; this.spawned = 0;
+    this.spawnGap = ([2.9, 1.9, 1.5, 1.25, 1.1, 0.95][this.waveIdx] ?? 0.95) * (1 + this.mercy * 0.18); this.spawnT = 0.5; this.cap = Math.max(4, (g.difficulty !== 'brutal' && this.waveIdx < 2 ? w.cap-2 : w.cap) + (g.difficulty === 'brutal' ? 1 : 0) - this.mercy); this.state = 'wave'; this.stateT = 0; this.killsThisWave = 0; this.spawned = 0;
     const th = g.world.THEME.key; const text = this.waveIdx === 0 ? COPY.banners.start : this.waveIdx === 1 ? COPY.banners.wave2 : this.waveIdx === 2 ? COPY.worlds[th].wave3 : this.waveIdx === 3 ? COPY.banners.more : this.waveIdx === 4 ? COPY.banners.run : COPY.banners.no;
     g.hud.banner(text, this.waveIdx >= 2 ? 'normal' : 'big'); g.hud.setWorld(g.world.THEME.name, `WAVE ${this.waveIdx + 1} / ${this.waves.length}`);
     g.audio.setMusicMix({ bed: 0.4, combat: Math.min(1, 0.6 + this.waveIdx * 0.15) }, 1.5); g.audio.play('sfx_wave_hit', { vol: 0.9 });

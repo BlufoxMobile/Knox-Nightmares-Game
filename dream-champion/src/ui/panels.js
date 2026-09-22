@@ -70,6 +70,13 @@ const bool = v => (v === true || v === 1 || v === '1' || v === 'true') ? 'true' 
 function settingsHTML(s = {}, withDifficulty = false) {
   const S = COPY.settings;
   const rows = [
+    ['CAMERA CONTROL', toggle('controlMode', s.controlMode ?? 'follow', [['FOLLOW KNOX', 'follow'], ['INDEPENDENT AIM', 'twin']])],
+    ['BUTTON SIZE', toggle('controlSize', s.controlSize ?? 1, [['SMALL', .85], ['NORMAL', 1], ['LARGE', 1.15]])],
+    ['BUTTON OPACITY', toggle('controlOpacity', s.controlOpacity ?? .9, [['SOFT', .6], ['CLEAR', .9], ['SOLID', 1]])],
+    ['SIDE SPACING', toggle('controlInset', s.controlInset ?? 14, [['EDGE', 14], ['INSET', 38], ['WIDE', 62]])],
+    ['BUTTON HEIGHT', toggle('controlHeight', s.controlHeight ?? 14, [['LOW', 14], ['MID', 38], ['HIGH', 62]])],
+    ['THREAT WARNINGS', toggle('threatWarnings', bool(s.threatWarnings ?? true), [['ON', 'true'], ['OFF', 'false']])],
+    ['REPEAT WAKE FILM', toggle('wakeReplay', s.wakeReplay ?? 'watch', [['WATCH', 'watch'], ['SKIP AFTER FIRST', 'skip']])],
     [S.autoBlast, toggle('autoBlast', bool(s.autoBlast ?? true), [['ON', 'true'], ['OFF', 'false']])],
     [S.look, toggle('look', s.look ?? 1, [['SLOW', 0.7], ['NORMAL', 1], ['FAST', 1.4]])],
     [S.lefty, toggle('lefty', bool(s.lefty ?? false), [['OFF', 'false'], ['ON', 'true']])],
@@ -140,7 +147,7 @@ export const panels = {
     const html =
       '<div class="panel wide pausep">' +
         '<h1 class="ph">' + esc(COPY.pause.head) + '</h1>' +
-        settingsHTML(settings, false) +
+        '<div class="sscroll">' + settingsHTML(settings, false) + '</div>' +
         '<div class="row">' + btn('resume', COPY.pause.resume, 'pulse') + btn('quit', COPY.pause.quit, 'alt') + '</div>' +
       '</div>';
     render('pause', 'dim', html, fn);

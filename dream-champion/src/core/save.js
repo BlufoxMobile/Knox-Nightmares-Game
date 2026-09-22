@@ -1,5 +1,5 @@
 const KEY = 'knox-nightmares-v2';
-const DEF = { version: 2, slain: {}, best: {}, secrets: {}, settings: { autoBlast: true, look: 1, lefty: false, shake: 1, quality: 'auto', mute: false, difficulty: 'brave', seenIntro: false, seenTut: {} }, stats: { kills: 0, headshots: 0, dodges: 0, wakes: 0 } };
+const DEF = { version: 2, slain: {}, best: {}, secrets: {}, settings: { autoBlast: true, look: 1, controlMode: 'follow', controlSize: 1, controlOpacity: 0.9, controlInset: 14, controlHeight: 14, threatWarnings: true, wakeReplay: 'watch', seenWake: false, lefty: false, shake: 1, quality: 'auto', mute: false, difficulty: 'brave', seenIntro: false, seenTut: {} }, stats: { kills: 0, headshots: 0, dodges: 0, wakes: 0 } };
 function deep(a, b) { for (const k in b) { if (b[k] && typeof b[k] === 'object' && !Array.isArray(b[k])) { a[k] = a[k] || {}; deep(a[k], b[k]); } else if (a[k] === undefined) a[k] = b[k]; } return a; }
 export const save = {
   data: null,

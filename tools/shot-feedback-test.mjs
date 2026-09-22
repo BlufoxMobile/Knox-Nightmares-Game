@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {Projectiles} from '../dream-champion/src/game/Projectiles.js';
+let misses=0,hits=0;const noop=()=>{};
+const ctx={time:0,game:{onMiss:()=>misses++,shake:noop,audio:{play:noop},lightFlash:noop},particlesAdd:{one:noop,burst:noop},particlesAlpha:{burst:noop}};
+const ps=new Projectiles(ctx);ps.trail=noop;
+const enemy={alive:true,x:0,y:0,z:1,r:.5,height:2,headY:1.8,def:{},hurt(){hits++;}};
+const shot={x:0,y:1,z:0,dx:0,dy:0,dz:1,speed:60,life:1,dmg:12,head:18,color:0xffffff,target:enemy};
+ps.fire(shot);ps.fixedUpdate(1/60,[enemy],null,null);assert.equal(hits,1);assert.equal(misses,0);
+ps.fire({...shot,life:.001});ps.fixedUpdate(1/60,[],null,null);assert.equal(misses,1);
+ps.fire({...shot,aoe:2});ps.fixedUpdate(1/60,[enemy],null,null);assert.equal(hits,2);assert.equal(misses,1,'AOE hit is not reported as a miss');
+console.log('PASS: hit, targeted miss, and area-damage feedback remain distinct.');
