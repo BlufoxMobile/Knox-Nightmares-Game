@@ -82,7 +82,9 @@ export class Player {
     // current view. Camera follow must never feed its own rotation back into movement.
     let mx = inp.mx, my = inp.my; let ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; ml = 1; }
     const moving = ml > 0.05;
-    this.moveYaw = steerHeading(this.steering, mx, my, this.cam.yaw, -yawIn * friction);
+    const twin = g.save.data.settings.controlMode === 'twin';
+    this.moveYaw = twin ? (moving ? this.cam.yaw + Math.atan2(-mx, my) : null) : steerHeading(this.steering, mx, my, this.cam.yaw, -yawIn * friction);
+    if (twin) this.steering.active = false;
     const wantX = moving ? Math.sin(this.moveYaw) * ml : 0;
     const wantZ = moving ? Math.cos(this.moveYaw) * ml : 0;
     const maxSp = (this.swim ? 5.6 : 6.4) * (this.buffs.quick > 0 ? 1.15 : 1);
@@ -146,6 +148,7 @@ export class Player {
     let targetYaw = this.faceYaw;
     if (R.t >= 0) targetYaw = Math.atan2(R.dirx, R.dirz);
     else if (this.locked) targetYaw = Math.atan2(this.locked.x - this.x, this.locked.z - this.z);
+    else if (twin) targetYaw = this.cam.yaw;
     else if (moving) targetYaw = this.moveYaw;
     else if (aiming || looking) targetYaw = this.cam.yaw;
     this.faceYaw = dampAng(this.faceYaw, targetYaw, 18, step);
@@ -153,8 +156,12 @@ export class Player {
     let autoOk = false;
     // 45deg = half the horizontal FOV on a phone at the 50deg vertical FOV: auto-blast anything ON SCREEN when it is close, but never
     // shoot at something the player cannot see (50deg was outside the frame edge).
-    if (this.locked) { const ld = Math.hypot(this.locked.x - this.x, this.locked.z - this.z); autoOk = ld < 8 ? this.lockAng < 45 * Math.PI / 180 : (ld < 16 && this.lockAng < 20 * Math.PI / 180); }
-    const fireHeld = (inp.fire && !this.charging) || (g.autoBlast && (autoOk || this.tapLock > 0) && this.lockT > 0.12 && !inp.fire && !this.charging);
+    if (this.locked && this.targetInRange()) { const ld = Math.hypot(this.locked.x - this.x, this.locked.z - this.z); autoOk = ld < 8 ? this.lockAng < 45 * Math.PI / 180 : (ld < 16 && this.lockAng < 20 * Math.PI / 180); }
+    if (this.locked && autoOk) {
+      _v.set(this.locked.x, (this.locked.y || 0)+this.locked.height*.6, this.locked.z).project(this.ctx.camera);
+      autoOk = _v.z >= -1 && _v.z <= 1 && Math.abs(_v.x) <= 1 && Math.abs(_v.y) <= 1;
+    }
+    const fireHeld = (inp.fire && !this.charging) || (g.autoBlast && (this.targetInRange() && autoOk) && this.lockT > 0.12 && !inp.fire && !this.charging);
     // charge shot: hold fire with nothing locked (or double-tap via dashQ? no) — releasing fires the charged shot
     if (inp.fire && inp.fireHold >= 0.6 && !this.charging && this.ammo.charge && !this.locked) { this.charging = true; this.chargeT = 0; g.audio.play('sfx_charge', { vol: 0.6 }); }
     if (this.charging) { this.chargeT += step; if (!inp.fire || this.chargeT >= 0.9 || this.locked) { this.fireShot(true); this.charging = false; this.fireCd = 0.35; } }
@@ -163,7 +170,7 @@ export class Player {
     this.combatT = enemies.some(e => e.alive) ? 3 : Math.max(0, this.combatT - step);
     // Follow throughout the turn, not only after releasing the stick. Manual look
     // temporarily owns the camera; follow resumes smoothly after the gesture ends.
-    if (this.cam.autoT <= 0) {
+    if (!twin && this.cam.autoT <= 0) {
       const followYaw = R.t >= 0 ? Math.atan2(R.dirx, R.dirz) : moving ? this.moveYaw : this.faceYaw;
       const dd = angDiff(this.cam.yaw, followYaw);
       this.cam.yaw += clamp(dd * 7, -4.8, 4.8) * step;
@@ -187,19 +194,20 @@ export class Player {
       let best = null, bd = 80; for (const e of enemies) { if (!e.alive) continue; _v.set(e.x, (e.y || 0) + e.height * 0.6, e.z).project(cam); if (_v.z > 1) continue; const sx = (_v.x + 1) / 2 * innerWidth, sy = (1 - _v.y) / 2 * innerHeight; const d = Math.hypot(sx - inp.tap.x, sy - inp.tap.y); if (d < bd) { bd = d; best = e; } }
       if (best) { this.locked = best; this.tapLock = 2; this.lockT = 0.12; }
     }
-    const cy = this.moveYaw ?? this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy);
+    const cy = this.game.save.data.settings.controlMode === 'twin' ? this.cam.yaw : (this.moveYaw ?? this.cam.yaw); const fx = Math.sin(cy), fz = Math.cos(cy);
     const inCone = e => e && e.alive && !e.noLock &&
-      Math.hypot(e.x - this.x, e.z - this.z) <= 26 &&
-      Math.abs(angDiff(cy, Math.atan2(e.x - this.x, e.z - this.z))) <= Math.PI / 6;
+      Math.hypot(e.x - this.x, e.z - this.z) <= 48 &&
+      (this.game.save.data.settings.controlMode !== 'twin' || Math.abs(Math.atan2((e.y || 0)+e.height*.6-this.y-1.3, Math.hypot(e.x-this.x,e.z-this.z))-this.cam.pitch)<.4) &&
+      Math.abs(angDiff(cy, Math.atan2(e.x - this.x, e.z - this.z))) <= (this.tapLock > 0 && this.moveYaw === null ? Math.PI * .49 : Math.PI / 4);
     if (!inCone(this.locked)) { this.locked = null; this.tapLock = 0; this.lockT = 0; }
     // Visibility stays camera-relative even when movement has selected a new heading.
     if (this.locked) this.lockAng = Math.abs(angDiff(this.cam.yaw, Math.atan2(this.locked.x - this.x, this.locked.z - this.z)));
     if (this.tapLock > 0) { this.tapLock -= step; if (this.locked && this.locked.alive) { this.lockT += step; return; } this.tapLock = 0; }
     let best = null, bs = -1;
     for (const e of enemies) {
-      if (!inCone(e)) continue; const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz); if (d > 26 || d < 0.01) continue;
+      if (!inCone(e)) continue; const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz); if (d > 48 || d < 0.01) continue;
       const ang = Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)); if (ang > 60 * Math.PI / 180 && d > 3.5) continue;
-      const threat = e.windup > 0 ? 1 : d < 3 ? 0.5 : 0; const s = 0.55 * (1 - ang / (30 * Math.PI / 180)) + 0.3 * (1 - d / 26) + 0.15 * threat + (e.boss ? 0.05 : 0);
+      const threat = e.windup > 0 ? 1 : d < 3 ? 0.5 : 0; const s = 0.55 * (1 - ang / (30 * Math.PI / 180)) + 0.3 * (1 - d / 48) + 0.15 * threat + (e.boss ? 0.05 : 0);
       if (s > bs) { bs = s; best = e; }
     }
     if (this.locked && (!this.locked.alive || this.locked.noLock)) { this.lockHold = (this.lockHold || 0) + step; if (this.lockHold > 0.15) { this.locked = null; this.lockHold = 0; } }
@@ -211,7 +219,11 @@ export class Player {
       this.lockAng = Math.abs(angDiff(this.cam.yaw, Math.atan2(this.locked.x - this.x, this.locked.z - this.z)));
     }
   }
-  scoreOf(e) { const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz) || 1; const cy = this.moveYaw ?? this.cam.yaw; const ang = Math.acos(clamp((dx * Math.sin(cy) + dz * Math.cos(cy)) / d, -1, 1)); return 0.55 * (1 - ang / (30 * Math.PI / 180)) + 0.3 * (1 - d / 26); }
+  scoreOf(e) { const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz) || 1; const cy = this.game.save.data.settings.controlMode === 'twin' ? this.cam.yaw : (this.moveYaw ?? this.cam.yaw); const ang = Math.acos(clamp((dx * Math.sin(cy) + dz * Math.cos(cy)) / d, -1, 1)); return 0.55 * (1 - ang / (30 * Math.PI / 180)) + 0.3 * (1 - d / 48); }
+  targetInRange() {
+    const e = this.locked;
+    return !!e && Math.hypot(e.x-this.x, (e.y || 0)+e.height*.6-this.y-1.3, e.z-this.z) <= this.ammo.speed*this.ammo.life;
+  }
   shotTarget() {
     const e = this.locked;
     return e && e.alive && Math.abs(angDiff(this.faceYaw, Math.atan2(e.x - this.x, e.z - this.z))) < 0.35 ? e : null;
@@ -223,7 +235,7 @@ export class Player {
     const cy = this.faceYaw, cp = this.cam.pitch; out.set(this.x + Math.sin(cy) * Math.cos(cp) * 30, this.y + 1.3 + Math.sin(cp) * 30, this.z + Math.cos(cy) * Math.cos(cp) * 30); return out;
   }
   fireShot(charged) {
-    const g = this.game, A = this.ammo; const mz = this.muzzleW; this.headBias = Math.random() < 0.22; const target = this.aimPoint(_v2); this.headBias = false;
+    const g = this.game, A = this.ammo; const mz = this.muzzleW; this.headBias = false; const target = this.aimPoint(_v2); this.headBias = false;
     let dx = target.x - mz.x, dy = target.y - mz.y, dz = target.z - mz.z; const l = Math.hypot(dx, dy, dz) || 1; dx /= l; dy /= l; dz /= l;
     const over = this.buffs.overcharge > 0; const dmgMul = (over ? 2 : 1) * (this.buffs.vision > 0 ? 1.5 : 1);
     const shots = charged && A.charge.spread ? A.charge.spread : (over && A.style === 'bolt' ? 3 : 1);
@@ -239,7 +251,7 @@ export class Player {
     g.audio.play(charged ? 'sfx_charge_shot' : 'sfx_' + this.ammoKey, { vol: charged ? 1 : 0.8, vary: 0.06, minGap: 0.05 });
     this.kick = charged ? 1 : 0.5; this.trauma = Math.min(1, this.trauma + (charged ? 0.2 : 0.05)); this.recoil = charged ? 2.4 : 1.2;
     this.anim.upperShot('shoot', 0.03, 3.5);
-    g.onShot();
+    g.onShot(charged);
   }
   // chip damage (acid, gas): never grants i-frames, never counts as a dodgeable hit
   hurtSoft(dmg) {

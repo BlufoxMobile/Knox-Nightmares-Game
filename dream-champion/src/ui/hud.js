@@ -154,11 +154,12 @@ export const hud = {
     init();
     if (state !== last.reticle) { last.reticle = state; el.reticle.className = state === 'off' ? 'hidden' : state; }
     // locked: the reticle sits ON the target so it's obvious what the blaster is pointed at
-    const lock = (state === 'lock' || state === 'weak') && sx !== undefined;
+    const lock = Number.isFinite(sx) && Number.isFinite(sy);
+    el.reticle.dataset.label = state === 'range' ? 'OUT OF RANGE' : state === 'edge' ? 'TURN TO TARGET' : '';
     const tx = lock ? Math.round(sx - innerWidth / 2) : 0, ty = lock ? Math.round(sy - (innerHeight / 2 - 20)) : 0;
     if (tx !== last.retX || ty !== last.retY) { last.retX = tx; last.retY = ty; el.reticle.style.transform = tx || ty ? `translate(${tx}px,${ty}px)` : ''; }
   },
-  hitmarker(kind = 'body') { init(); retrigger(el.hitmark, 'hit', kind); },
+  hitmarker(kind = 'body', sx, sy) { init(); el.hitmark.style.left = Number.isFinite(sx) ? sx + 'px' : '50%'; el.hitmark.style.top = Number.isFinite(sy) ? sy + 'px' : 'calc(50% - 20px)'; retrigger(el.hitmark, 'hit', kind); },
 
   // kind: 'body' | 'weak' | 'crit' | 'kill' | 'heal'
   damageNumber(x, y, text, kind = 'body') {

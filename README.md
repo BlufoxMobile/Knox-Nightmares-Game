@@ -11,7 +11,7 @@ The playable game is in `dream-champion/`.
   again, to choose a direction relative to the current view.
 - Drag the right side to look. Dragging BLAST also looks while continuing to fire.
   Manual look temporarily pauses automatic follow.
-- Aim assist only holds enemies within 30 degrees of the chosen direction;
+- Aim assist only holds enemies within 45 degrees of the chosen direction;
   turning away releases an old lock. Shots follow Knox during the camera swing.
 
 ## Controls regression tests
@@ -39,3 +39,28 @@ button, which restarts the current level from wave one. Errors/stalls still
 release the retry screen. No new video generation was needed.
 
 Test playback recovery and retry routing with `node tools/wake-film-test.mjs`.
+
+## Mobile playability settings
+
+Pause or open Settings to choose Follow Knox (default) or Independent Aim.
+Independent Aim uses camera-relative movement while the right thumb owns aiming;
+it does not automatically swing the camera with strafing. Settings also save
+button size, opacity, side spacing, height, sensitivity, warning visibility and
+whether to skip the wake film after it has been watched once.
+
+The crosshair projects the weapon aim point after the camera update, including
+vertical targets and moving-target lead. Amber labels identify out-of-range and
+off-screen targets; aim assist may select targets up to 48 m away, but actual
+weapon ranges are unchanged. Automatic firing requires an in-range visible
+lock. Hits/weak hits/kills appear at the enemy; charged shots pulse gold and
+missed targeted projectiles show a short, subdued notice.
+
+Off-screen nearby windups/lunges trigger a directional warning and a throttled
+positional cue. Brave gives four seconds to orient at entry and eases the first
+two waves; repeated full-level losses retain bounded assistance for that level.
+Brutal's opening remains unchanged. Clearing a level resets its retry assistance.
+
+Additional tests (use the Three.js loader for tests importing Three.js):
+`aim-hud-test.mjs`, `difficulty-test.mjs`, `shot-feedback-test.mjs`, and
+`mobile-settings-test.mjs` in `tools/`. Physical iPhone feel is not verified by
+these tests.

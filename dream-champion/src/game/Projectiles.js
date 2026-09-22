@@ -8,7 +8,7 @@ export class Projectiles {
   constructor(ctx) { this.ctx = ctx; this.list = []; this.pool = []; this.eshots = []; this.epool = []; }
   clear() { this.list.length = 0; this.eshots.length = 0; }
   fire(o) {
-    const p = this.pool.pop() || {}; Object.assign(p, { x: o.x, y: o.y, z: o.z, px: o.x, py: o.y, pz: o.z, vx: o.dx * o.speed, vy: o.dy * o.speed, vz: o.dz * o.speed, speed: o.speed, life: o.life, dmg: o.dmg, head: o.head, style: o.style, color: o.color, aoe: o.aoe || 0, homing: o.homing || 0, target: o.target || null, pierce: !!o.pierce, hit: null, knock: o.knock || 0, sever: !!o.sever, charge: !!o.charge, bend: o.bend || 0, t: 0 });
+    const p = this.pool.pop() || {}; Object.assign(p, { x: o.x, y: o.y, z: o.z, px: o.x, py: o.y, pz: o.z, vx: o.dx * o.speed, vy: o.dy * o.speed, vz: o.dz * o.speed, speed: o.speed, life: o.life, dmg: o.dmg, head: o.head, style: o.style, color: o.color, aoe: o.aoe || 0, homing: o.homing || 0, target: o.target || null, pierce: !!o.pierce, hit: null, didHit: false, aimed: !!o.target, knock: o.knock || 0, sever: !!o.sever, charge: !!o.charge, bend: o.bend || 0, t: 0 });
     this.list.push(p); return p;
   }
   fireEnemy(o) { const p = this.epool.pop() || {}; Object.assign(p, { x: o.x, y: o.y, z: o.z, px: o.x, py: o.y, pz: o.z, vx: o.vx, vy: o.vy, vz: o.vz, life: o.life, dmg: o.dmg, style: o.style || 'bile', color: o.color || 0x6aff2a, gravity: o.gravity || 0, r: o.r || 0.35, puddle: o.puddle || 0, t: 0 }); this.eshots.push(p); }
@@ -34,12 +34,12 @@ export class Projectiles {
         if (segCircleXZ(p.px, p.pz, p.x, p.z, e.x, e.z, e.r + 0.18)) {
           let head; if (e.boss) head = !!e.weakOpen && p.y > hy + e.height * 0.42; else if (e.def && e.def.swim) { const fx = Math.sin(e.face), fz = Math.cos(e.face); head = ((p.x - e.x) * fx + (p.z - e.z) * fz) > e.r * 0.45; } else head = p.y > hy + (e.headY ?? e.height * 0.85) - 0.3; const dl = Math.hypot(p.vx, p.vz) || 1;
           if (p.aoe) { this.explode(p, enemies, e); dead = true; break; }
-          e.hurt(head ? p.head : p.dmg, p.vx / dl, p.vz / dl, head, p); p.hit = e; if (!p.pierce) { dead = true; break; }
+          e.hurt(head ? p.head : p.dmg, p.vx / dl, p.vz / dl, head, p); p.hit = e; p.didHit = true; if (!p.pierce) { dead = true; break; }
         }
       }
       // trail
       this.trail(p, step);
-      if (dead) { this.list[i] = this.list[this.list.length - 1]; this.list.pop(); this.pool.push(p); }
+      if (dead) { if (p.aimed && !p.didHit) this.ctx.game.onMiss?.(); this.list[i] = this.list[this.list.length - 1]; this.list.pop(); this.pool.push(p); }
     }
     for (let i = this.eshots.length - 1; i >= 0; i--) {
       const p = this.eshots[i]; p.t += step; p.life -= step; p.px = p.x; p.py = p.y; p.pz = p.z; p.vy -= p.gravity * step; p.x += p.vx * step; p.y += p.vy * step; p.z += p.vz * step;
@@ -63,6 +63,6 @@ export class Projectiles {
     this.ctx.particlesAlpha.burst(p.x, p.y, p.z, { n: 8, type: P.SMOKE, color: new THREE.Color(0x202028), speed: 1.5, life: 0.9, size: 0.6, sizeEnd: 1.6, gravity: -0.5 });
     g.shake(p.charge ? 0.35 : 0.15); g.audio.play(p.style === 'disc' ? 'sfx_bonesaw_hit' : 'sfx_depth_explode', { x: p.x, z: p.z, vol: 0.9, vary: 0.1 });
     g.lightFlash(p.x, p.y, p.z, p.color, 1.5);
-    for (const e of enemies) { if (!e.alive) continue; const d = Math.hypot(e.x - p.x, e.z - p.z); if (d < r + e.r) { const f = 1 - clamp((d - e.r) / r, 0, 1) * 0.5; const dl = d || 1; e.hurt(p.dmg * f, (e.x - p.x) / dl, (e.z - p.z) / dl, e === direct && Math.abs(p.y - ((e.y || 0) + (e.headY ?? e.height * 0.85))) < 0.28, p); } }
+    for (const e of enemies) { if (!e.alive) continue; const d = Math.hypot(e.x - p.x, e.z - p.z); if (d < r + e.r) { p.didHit = true; const f = 1 - clamp((d - e.r) / r, 0, 1) * 0.5; const dl = d || 1; e.hurt(p.dmg * f, (e.x - p.x) / dl, (e.z - p.z) / dl, e === direct && Math.abs(p.y - ((e.y || 0) + (e.headY ?? e.height * 0.85))) < 0.28, p); } }
   }
 }

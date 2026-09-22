@@ -485,3 +485,28 @@ body.nokb #ctl,body.nokb #stick{display:none}
 #stick i{width:36px;height:36px;margin:-18px 0 0 -18px}
 #hud.lefty #stick:not(.on){left:auto;right:calc(var(--sr) + 32px)}
 #ctl button{opacity:.9;background:rgba(5,12,24,.68);border-color:rgba(255,255,255,.65)}
+
+/* Mobile preferences remain within the phone's safe area. */
+#ctl{right:calc(var(--sr) + var(--control-inset,14px));bottom:calc(var(--sb) + var(--control-height,14px));scale:var(--control-size,1);transform-origin:bottom right}
+#ctl.left{left:calc(var(--sl) + var(--control-inset,14px));transform-origin:bottom left}
+#ctl button{opacity:var(--control-opacity,.9)}
+#stick:not(.on){left:calc(var(--sl) + var(--control-inset,14px) + 18px);bottom:calc(var(--sb) + var(--control-height,14px) + 18px);width:calc(92px * var(--control-size,1));height:calc(92px * var(--control-size,1));opacity:var(--control-opacity,.9)}
+#hud.lefty #stick:not(.on){left:auto;right:calc(var(--sr) + var(--control-inset,14px) + 18px)}
+#reticle{transition:opacity .15s}
+#reticle.range i,#reticle.range b{background:#ffcf4a}
+#reticle.edge i{background:#ffcf4a}
+#reticle::after{content:attr(data-label);position:absolute;top:22px;left:50%;transform:translateX(-50%);font:700 10px var(--ui);white-space:nowrap;color:#ffdf82;text-shadow:0 2px 4px #000}
+#reticle.shot b{animation:aimShot .16s ease-out}
+#reticle.charged b{animation:aimCharge .3s ease-out;background:#ffcf4a}
+@keyframes aimShot{0%{box-shadow:0 0 12px 5px #4de3ff;scale:2}100%{scale:1}}
+@keyframes aimCharge{0%{box-shadow:0 0 18px 8px #ffcf4a;scale:3}100%{scale:1}}
+#threat-warning{position:absolute;top:calc(var(--st) + 76px);left:50%;transform:translateX(-50%);padding:7px 12px;border:1px solid #ffcf4a;border-radius:8px;background:#171009e8;color:#ffe3a0;font:800 13px var(--ui);letter-spacing:.04em;text-align:center;pointer-events:none}
+#threat-warning[hidden]{display:none}
+#shot-feedback{position:absolute;left:50%;top:calc(50% + 52px);transform:translateX(-50%);font:700 12px var(--ui);color:#f0d3a3;text-shadow:0 2px 4px #000;pointer-events:none}
+@media(max-height:370px){#ctl{scale:min(var(--control-size,1),1)}#threat-warning{top:calc(var(--st) + 56px);font-size:11px}}
+@media(prefers-reduced-motion:reduce){#reticle.shot b,#reticle.charged b{animation:none}}
+.panel.pausep{display:flex;flex-direction:column;overflow:hidden;max-height:calc(100% - var(--st) - var(--sb) - 16px)}
+.pausep .srows{grid-template-columns:1fr 1fr;justify-items:stretch}
+.pausep .srow:nth-child(5){grid-column:auto}
+.pausep .row,.pausep h1{flex-shrink:0}
+.srow .toggle{flex-wrap:wrap}

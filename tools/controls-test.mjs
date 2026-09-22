@@ -75,3 +75,19 @@ for (const auto of [false,true]) {
   run(p,input(-1,0),180); aligned(p.cam.yaw,p.moveYaw,'follow resumes after manual look');
 }
 console.log('PASS: left/right/back/diagonal with and without fire; actual camera placement; straight holds; lock release/reacquisition; projectile heading; direction changes; jitter; manual look.');
+{
+  const p=player();p.game.save.data.settings.controlMode='twin';
+  run(p,input(1,0,true));
+  aligned(p.cam.yaw,Math.PI,'independent aim holds camera while strafing');
+  aligned(p.faceYaw,Math.PI,'independent aim keeps blaster forward while strafing');
+  assert.ok(p.x>10,'left thumb still moves in independent mode');
+  const shot=p.shots.at(-1);assert.ok(shot.dz<-.9,'strafe does not redirect shots');
+}
+{
+  const p=player(), far={alive:true,x:0,z:-40,y:0,height:2};
+  run(p,input(0,0),60,[far]);assert.equal(p.locked,far,'can track distant target');
+  assert.equal(p.targetInRange(),false,'distant target is not falsely in weapon range');
+  const shark={alive:true,x:0,z:-10,y:4,height:2};run(p,input(0,0,true),90,[shark]);
+  assert.equal(p.shots.at(-1).target,shark);assert.ok(p.shots.at(-1).dy>.25,'aim reaches elevated shark');
+}
+console.log('PASS: independent move/aim mode, distant target range, elevated shark shots.');

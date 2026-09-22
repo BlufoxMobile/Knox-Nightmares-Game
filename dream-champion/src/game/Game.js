@@ -20,6 +20,7 @@ import { COPY } from './data/copy.js';
 import { hud } from '../ui/hud.js';
 import { panels } from '../ui/panels.js';
 import { fxdom } from '../ui/fxdom.js';
+import { aimScreen } from '../core/aim-hud.js';
 import { showWakeFilm } from '../ui/wake-film.js';
 import { clamp, rnd, pick, lerp, damp } from '../core/math.js';
 
@@ -43,7 +44,7 @@ export class Game {
     addEventListener('resize', () => this.onResize()); this.onResize();
     document.addEventListener('visibilitychange', () => { if (document.hidden) { if (this.state === 'play') this.pause(); } });
     matchMedia('(orientation: portrait)').addEventListener('change', e => { if (e.matches && this.state === 'play') this.pause(); });
-    hud.setTouchVisible(isTouchDevice()); hud.lefty(!!save.data.settings.lefty); this.input.setLefty(!!save.data.settings.lefty);
+    hud.setTouchVisible(isTouchDevice()); hud.lefty(!!save.data.settings.lefty); this.input.setLefty(!!save.data.settings.lefty); this.input.applyLayout(save.data.settings);
     if (!isTouchDevice()) document.body.classList.add('nokb');
   }
   onResize() { this.renderer.resize(); this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); }
@@ -120,7 +121,7 @@ export class Game {
     await new Promise(r => setTimeout(r, 1200)); fxdom.letterbox(false); this.cine = null; hud.hideUI(false); hud.hide();
   }
   map() { this.state = 'map'; hud.hide(); this.cancel(); this.clearHome(); this.restoreScene(); this.input.unlockMouse(); panels.map({ slain: save.data.slain, secrets: save.data.secrets }, a => { if (a.startsWith('world:')) this.enterWorld(a.split(':')[1]); else if (a === 'settings') panels.settings(x => { if (x === 'back') this.map(); else this.applySetting(x); }, save.data.settings); }); }
-  applySetting(x) { const [, k, v] = x.split(':'); const s = save.data.settings; if (k === 'autoBlast') { s.autoBlast = v === 'true'; this.autoBlast = s.autoBlast; } else if (k === 'look') s.look = +v; else if (k === 'lefty') { s.lefty = v === 'true'; hud.lefty(s.lefty); this.input.setLefty(s.lefty); } else if (k === 'shake') s.shake = +v; else if (k === 'quality') { s.quality = v; if (v !== 'auto') this.setTier(v); } else if (k === 'difficulty') { s.difficulty = v; this.difficulty = v; } save.write(); }
+  applySetting(x) { const [, k, v] = x.split(':'); const s = save.data.settings; if (k === 'autoBlast') { s.autoBlast = v === 'true'; this.autoBlast = s.autoBlast; } else if (['controlMode','wakeReplay'].includes(k)) { s[k] = v; this.player.steering.active = false; } else if (['controlSize','controlOpacity','controlInset','controlHeight'].includes(k)) { s[k] = +v; this.input.applyLayout(s); } else if (k === 'threatWarnings') s[k] = v === 'true'; else if (k === 'look') s.look = +v; else if (k === 'lefty') { s.lefty = v === 'true'; hud.lefty(s.lefty); this.input.setLefty(s.lefty); } else if (k === 'shake') s.shake = +v; else if (k === 'quality') { s.quality = v; if (v !== 'auto') this.setTier(v); } else if (k === 'difficulty') { s.difficulty = v; this.difficulty = v; } save.write(); }
   async wake(on) {
     try { if (on) { if (!this._wl) this._wl = await navigator.wakeLock.request('screen'); } else if (this._wl) { this._wl.release(); this._wl = null; } } catch (_) { }
   }
@@ -167,13 +168,13 @@ export class Game {
     this.projectiles.fixedUpdate(step, enemies, this.player, this.world);
     if (this.state !== 'play') return;
     this.tutorialStep(step, inp);
-    if (this.player.locked) { const e = this.player.locked; _v.set(e.x, (e.y || 0) + e.height * 0.6, e.z).project(this.camera); const on = _v.z < 1; hud.reticle(on ? (e.boss && e.weakOpen ? 'weak' : 'lock') : 'free', on ? (_v.x + 1) / 2 * innerWidth : 0, on ? (1 - _v.y) / 2 * innerHeight : 0); } else hud.reticle('free');
+
   }
   update(dt, real, alpha) {
     if (this.state === 'boot') return; this.tickTimers(real); this.ctx.time = this.time; FOG.time.value = this.time + (this.state !== 'play' ? real * 0 : 0);
     if (this.state !== 'play') { this.time += real; FOG.time.value = this.time; }
     const p = this.player; const inpMute = null;
-    if (this.state === 'play' && !this.paused) { p.update(dt, alpha); this.director.update(dt, alpha); }
+    if (this.state === 'play' && !this.paused) { p.update(dt, alpha); this.director.update(dt, alpha); this.updateAimHUD(real); }
     else if (this.state === 'title' || this.state === 'map' || this.state === 'loading') { p.anim.update(real); this.titleT = (this.titleT || 0) + real; this.titleCamera(real); }
     else if (this.state === 'wake' || this.state === 'cleared' || this.state === 'cine' || this.state === 'ending') { p.anim.update(real); this.director.update(real, alpha); this.cineCamera(real); }
     if (this.cine && this.cine.kind === 'blaster') this.blasterCam(real);
@@ -190,6 +191,30 @@ export class Game {
     // dynamic resolution
     if (this.state === 'play' && !this.paused && this.renderer.dyn.sample(real * 1000, real)) { this.renderer.resize(true); this.renderer.dyn.settle(2); }
     if (this.world && this.world.THEME.underwater) { fx.underwater = 1; }
+  }
+  updateAimHUD(real) {
+    const p = this.player, camera = this.camera;
+    if (this.time >= (this.missUntil || 0)) document.getElementById('shot-feedback').textContent = '';
+    camera.updateMatrixWorld(true);
+    const target = p.shotTarget();
+    const pt = aimScreen(p.aimPoint(_v), camera, innerWidth, innerHeight);
+    hud.reticle(!pt.visible ? (target ? 'edge' : 'free') : target ? (!p.targetInRange() ? 'range' : target.boss && target.weakOpen ? 'weak' : 'lock') : 'free', pt.x, pt.y);
+    const warning = document.getElementById('threat-warning');
+    let nearest = null, best = Infinity;
+    if (save.data.settings.threatWarnings !== false) for (const e of this.director.enemies) {
+      if (!e.alive || !(e.windup > 0 || e.state === 'lunge')) continue;
+      const d = Math.hypot(e.x-p.x, e.z-p.z); if (d > 18 || d >= best) continue;
+      const view = aimScreen(_v.set(e.x,(e.y || 0)+e.height*.6,e.z),camera,innerWidth,innerHeight);
+      if (!view.visible) { nearest=e; best=d; }
+    }
+    warning.hidden = !nearest;
+    if (nearest) {
+      const angle = Math.atan2(nearest.x-p.x,nearest.z-p.z)-p.cam.yaw;
+      const side = Math.sin(angle), ahead = Math.cos(angle);
+      warning.textContent = (ahead < -.5 ? '↓ BEHIND' : side > 0 ? '← LEFT' : 'RIGHT →') + ((nearest.y || 0) > p.y+2 ? ' · ABOVE' : '') + ' · DODGE!';
+      this.threatSoundT = (this.threatSoundT || 0)-real;
+      if (this.threatSoundT <= 0) { this.audio.play('sfx_tick_weak',{x:nearest.x,z:nearest.z,vol:.65}); this.threatSoundT=1.2; }
+    } else this.threatSoundT=0;
   }
   render(alpha, real) { this.renderer.render(this.scene, this.camera, this.time); }
   // debug/test: advance the simulation without rendering (used by the headless harness)
@@ -223,10 +248,19 @@ export class Game {
   shake(t) { this.player.trauma = Math.min(1, this.player.trauma + t); }
   lightFlash(x, y, z, color, intensity = 1) { const f = this.flashLights.reduce((a, b) => a.t < b.t ? a : b); f.l.position.set(x, y, z); f.l.color.set(color); f.t = 0.08; f.i = 30 * intensity; f.l.intensity = f.i; }
   isOnScreen(e) { _v.set(e.x, e.y + e.height * 0.5, e.z).project(this.camera); return _v.z < 1 && Math.abs(_v.x) < 1.05 && Math.abs(_v.y) < 1.05; }
-  onShot() { }
+  onMiss() {
+    if (this.state !== 'play' || this.time-(this.lastHitTime ?? -1) < .3) return;
+    const el = document.getElementById('shot-feedback'); el.textContent = 'MISSED';
+    this.missUntil = this.time+.3;
+  }
+  onShot(charged) {
+    const dot = document.getElementById('reticle');
+    dot.classList.remove('shot','charged'); void dot.offsetWidth;
+    dot.classList.add(charged ? 'charged' : 'shot');
+  }
   bloodScreen() { this.bloodT = 0.5; }
   onEnemyHit(e, amt, head, proj) {
-    const p = this.player; hud.hitmarker(head ? 'weak' : 'body'); _v.set(e.x + rnd(-.3, .3), e.y + (head ? e.headY : e.height * 0.6), e.z).project(this.camera); if (_v.z < 1) hud.damageNumber((_v.x + 1) / 2 * innerWidth, (1 - _v.y) / 2 * innerHeight, String(amt), head ? 'weak' : 'body');
+    const p = this.player; this.lastHitTime = this.time; document.getElementById('shot-feedback').textContent = ''; _v.set(e.x + rnd(-.3, .3), e.y + (head ? e.headY : e.height * 0.6), e.z).project(this.camera); if (_v.z < 1) { hud.hitmarker(head ? 'weak' : 'body', (_v.x+1)/2*innerWidth, (1-_v.y)/2*innerHeight); } if (_v.z < 1) hud.damageNumber((_v.x + 1) / 2 * innerWidth, (1 - _v.y) / 2 * innerHeight, String(amt), head ? 'weak' : 'body');
     this.audio.play(head ? 'sfx_hit_head' : 'sfx_hit_flesh', { x: e.x, z: e.z, vol: 0.8, vary: 0.12, minGap: 0.04 }); this.audio.play(head ? 'sfx_tick_weak' : 'sfx_tick', { ui: true, vol: 0.35, minGap: 0.05 });
     const col = _c.set(e.def.blood); const hy = e.y + (head ? e.headY : e.height * 0.6);
     if (e.def.gore === 'cloud') { this.particlesAlpha.burst(e.x, hy, e.z, { n: 6, type: P.SMOKE, color: col, speed: 0.6, life: 1.8, size: 0.5, sizeEnd: 1.6, gravity: -0.2 }); }
@@ -236,7 +270,7 @@ export class Game {
   }
   onEnemyKill(e, head, dx, dz, proj) {
     const p = this.player; p.addKill(e, head); this.stats.kills++; if (head) this.stats.headshots++; this.stats.streak = Math.max(this.stats.streak, p.combo);
-    hud.setKills(p.kills); hud.hitmarker('kill'); this.audio.play('sfx_tick_kill', { ui: true, vol: 0.5 });
+    hud.setKills(p.kills); _v.set(e.x,e.y+e.height*.6,e.z).project(this.camera); hud.hitmarker('kill',(_v.x+1)/2*innerWidth,(1-_v.y)/2*innerHeight); this.audio.play('sfx_tick_kill', { ui: true, vol: 0.5 });
     if (!e.boss) { this.loop.stopTime(head ? 70 : 40); this.shake(0.2); }
     const col = _c.set(e.def.blood); const hy = e.y + e.height * 0.6;
     if (head) { hud.stamp(COPY.stamps.headshot, 'gold'); this.audio.play('sfx_headshot', { x: e.x, z: e.z, vol: 1 }); this.gore(e, 'skull', dx, dz, 1); }
@@ -294,6 +328,7 @@ export class Game {
     this.after(4.2, () => this.cleared(), 'kill');
   }
   cleared() {
+    if (this.retryCounts) this.retryCounts[this.worldKey] = 0;
     this.state = 'cleared'; fxdom.letterbox(false); hud.boss(null); hud.hide(); this.heroLightsOff(); this.bloodT = 0; this.player.hurtT = 0; this.input.unlockMouse(); this.bossActive = false; this.player.anim.play(Math.random() < 0.5 ? 'victory' : 'dance', 0.3); this.cine = { kind: 'victory', t: 0, dur: 10 };
     const p = this.player; this.camera.position.set(p.x + 2.4, 1.4, p.z + 2.6); this.camera.lookAt(p.x, 1.1, p.z); this.cine = null;
     const all = WORLD_ORDER.every(k => save.data.slain[k]); const t = Math.round(this.time - this.stats.t0);
@@ -303,20 +338,24 @@ export class Game {
   // ---------- wake (fail) ----------
   onPlayerDown(p) {
     if (this.state !== 'play') return;
+    this.retryCounts ||= {}; this.retryCounts[this.worldKey] = (this.retryCounts[this.worldKey] || 0) + 1;
     this.state = 'wake'; this.input.reset(); this.input.unlockMouse(); this.loop.slowMo(0.3, 1.2); hud.hideUI(true); this.audio.setMusicMix({ bed: 0.3 }, 1); this.audio.play('sfx_gasp', { vol: 1, delay: 0.9 }); save.data.stats.wakes++; save.write();
     this.after(0.9, () => { fxdom.tear(); fxdom.cut(1); }, 'down');
     this.after(1.3, async () => {
       if (this.state !== 'wake') return;
       const wv = this.assets.manifest.groups.wake?.find(a => a.type === 'video');
+      document.getElementById('threat-warning').hidden = true;
+      document.getElementById('shot-feedback').textContent = '';
       hud.hide(); this.renderer.fx.hurt = 0; this.renderer.fx.desat = 0;
       this.bloodT = 0; p.hurtT = 0; hud.low(false);
-      if (wv) {
+      if (wv && !(save.data.settings.seenWake && save.data.settings.wakeReplay === 'skip')) {
         this.wakeFilm?.dispose();
         const film = showWakeFilm(document.getElementById('app'), this.assets.url(wv.url), {
           muted: this.audio.muted, onVisible: () => fxdom.cut(0)
         });
         this.wakeFilm = film;
-        await film.finished;
+        const watched = await film.finished;
+        if (watched) { save.data.settings.seenWake = true; save.write(); }
         if (this.state !== 'wake' || this.wakeFilm !== film) { film.dispose(); return; }
       }
       // A failed download or denied autoplay must still leave a working retry screen.

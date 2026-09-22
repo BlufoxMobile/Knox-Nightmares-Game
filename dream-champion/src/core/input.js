@@ -35,6 +35,15 @@ export class Input {
     this.lefty = !!save.data.settings.lefty;
     this._bind();
   }
+  applyLayout(settings) {
+    const root = document.getElementById('hud');
+    const size = clamp(Number(settings.controlSize) || 1, .85, 1.15);
+    root.style.setProperty('--control-size', size);
+    root.style.setProperty('--control-opacity', clamp(Number(settings.controlOpacity) || .9, .6, 1));
+    root.style.setProperty('--control-inset', clamp(Number(settings.controlInset) || 14, 14, 62) + 'px');
+    root.style.setProperty('--control-height', clamp(Number(settings.controlHeight) || 14, 14, 62) + 'px');
+    this.stickR = 46 * size;
+  }
   _zone(x, y) {
     // Straight 50/50 split: the half of the screen under the movement thumb is ALWAYS the stick.
     // (was 42% / 58% — a thumb resting just past the middle silently became a camera drag)
