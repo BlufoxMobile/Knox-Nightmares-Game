@@ -26,3 +26,16 @@ node tools/input-test.mjs
 These exercise the real fixed-step controller, camera placement, projectile
 creation, target changes and touch input handlers. They do not replace testing
 responsiveness on a physical phone.
+
+## Loss sequence
+
+The bundled `dream-champion/assets/video/wake.mp4` matches Higgsfield take
+`ffe074a6-6760-4d72-ab49-5f5bb84cb2b1` (September 21, 2026): Knox wakes,
+wipes his forehead and settles back into bed. The film attempts inline playback,
+retries muted if audible autoplay is blocked, then offers tap-to-play if needed.
+Only the explicit Skip scene button skips it. Its final frame remains behind
+“It looks like you woke up. Do you want to try again?” and the bottom Try Again
+button, which restarts the current level from wave one. Errors/stalls still
+release the retry screen. No new video generation was needed.
+
+Test playback recovery and retry routing with `node tools/wake-film-test.mjs`.
