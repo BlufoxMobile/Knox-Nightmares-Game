@@ -135,11 +135,11 @@ export class Game {
     }
   }
   async _enterWorld(key) {
-    panels.hide(); this.state = 'loading'; fxdom.fade(1, 500); await new Promise(r => setTimeout(r, 520)); hud.hide();
+    this.cancel(); this.restoreScene(); panels.hide(); this.state = 'loading'; fxdom.fade(1, 500); await new Promise(r => setTimeout(r, 520)); hud.hide();
     const load = document.getElementById('load'); load.classList.remove('out'); load.querySelector('#loadmsg').textContent = COPY.worlds[key].name;
     await this.loadWorld(key, f => { load.querySelector('#loadfill').style.width = (f * 100).toFixed(0) + '%'; });
     load.classList.add('out'); const p = this.player; p.setWorld(this.world.THEME); p.lampOn = true; this.heroLightsOff(); this.director.setup(key); p.kills = 0; p.headshots = 0; p.bestStreak = 1; this.stats = { kills: 0, headshots: 0, streak: 1, t0: this.time, secret: false }; this.hpMul = (this.difficulty === 'brutal' ? 1.35 : 1); this.bossActive = false; this.killTimes = []; this.lastTut = 0;
-    hud.reset && hud.reset(); hud.show(); hud.setHP(p.hp, p.maxhp); hud.setKills(0); hud.setUlt(0); hud.setDash(2, 2); hud.boss(null); hud.setWorld(this.world.THEME.name, ''); hud.reticle('free');
+    hud.reset && hud.reset(); hud.show(); hud.hideUI(false); hud.setTouchVisible(isTouchDevice() || this.input.touchActive); hud.setHP(p.hp, p.maxhp); hud.setKills(0); hud.setUlt(0); hud.setDash(2, 2); hud.boss(null); hud.setWorld(this.world.THEME.name, ''); hud.reticle('free');
     this.audio.setMusic(this.world.THEME.music, 1.5); this.audio.setMusicMix({ bed: 1 }, 0.5);
     this.state = 'play'; this.input.reset(); fxdom.fade(0, 900); this.director.startLevel(); this.input.lockMouse(); this.wake(true); this.renderer.dyn.settle && this.renderer.dyn.settle(3);
     const next = WORLD_ORDER[WORLD_ORDER.indexOf(key) + 1];
@@ -160,7 +160,7 @@ export class Game {
   // ---------- loop ----------
   fixedUpdate(step) {
     if (this.state !== 'play' || this.paused) return; this.time += step; this.ctx.time = this.time;
-    const inp = this.input.poll(step); if (inp.pause) { this.pause(); return; } if (inp.mute) this.audio.setMuted(!this.audio.muted);
+    const inp = this.input.poll(step); hud.setTouchVisible(isTouchDevice() || this.input.touchActive); if (inp.pause) { this.pause(); return; } if (inp.mute) this.audio.setMuted(!this.audio.muted);
     const enemies = this.director.enemies;
     this.player.fixedUpdate(step, inp, enemies); this.director.fixedUpdate(step);
     if (this.state !== 'play') return;

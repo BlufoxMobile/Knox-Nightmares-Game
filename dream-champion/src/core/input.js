@@ -3,7 +3,7 @@ import { clamp } from './math.js';
 import { save } from './save.js';
 
 const $ = id => document.getElementById(id);
-const isTouchDevice = () => (navigator.maxTouchPoints || 0) > 0;
+const isTouchDevice = () => (navigator.maxTouchPoints || 0) > 0 || (typeof matchMedia === 'function' && matchMedia('(any-pointer: coarse)').matches);
 
 export class Input {
   constructor(app) {
@@ -48,7 +48,7 @@ export class Input {
       const rel = e => { if (e && e.pointerId != null && pid !== -1 && e.pointerId !== pid) return; if (!el.classList.contains('down')) return; pid = -1; el.classList.remove('down'); up && up(e); };
       el.addEventListener('pointerdown', e => {
         e.preventDefault(); e.stopPropagation();
-        pid = e.pointerId; ox = e.clientX; oy = e.clientY; el.classList.add('down'); this.touchActive = e.pointerType !== 'mouse';
+        pid = e.pointerId; ox = e.clientX; oy = e.clientY; el.classList.add('down'); this.touchActive = e.pointerType !== 'mouse'; if (this.touchActive) document.body.classList.remove('nokb');
         down(e); this.anyQ = true;                                   // act FIRST: a capture failure must never eat a press
         try { el.setPointerCapture(e.pointerId); } catch (_) { }     // throws (NotFoundError) on some iOS pointer states
       });
@@ -113,7 +113,7 @@ export class Input {
     const end = e => {
       if (e.pointerType === 'mouse') { if (e.button === 0) { this.fireHeld = false; this.mouseDown = false; } return; }
       const p = this.pointers.get(e.pointerId); if (!p) return; this.pointers.delete(e.pointerId);
-      if (p.zone === 'move') { this.move.x = 0; this.move.y = 0; this.stickEl.classList.remove('on'); }
+      if (p.zone === 'move') { this.move.x = 0; this.move.y = 0; this._stickRest(); }
       // the release point counts toward drift too (a finger can jump on lift-off)
       else if (p.zone === 'look') { const d2 = Math.hypot(e.clientX - p.ox, e.clientY - p.oy); if (d2 > p.drift) p.drift = d2; }
       // tap-to-target: judged by how far the finger DRIFTED (p.slip), not by accumulated path length —
@@ -156,10 +156,23 @@ export class Input {
     let n = m / r; n = n < this.dead ? 0 : Math.pow((n - this.dead) / (1 - this.dead), this.curve); n = clamp(n / this.fullAt, 0, 1);
     if (m > 0) { this.move.x = dx / m * n; this.move.y = -dy / m * n; } else { this.move.x = 0; this.move.y = 0; }
   }
-  reset() { this.move.x = this.move.y = 0; this.look.dx = this.look.dy = 0; this.fireHeld = false; this.pointers.clear(); this.stickEl.classList.remove('on'); this.kb.clear(); this.mouseDown = false; document.querySelectorAll('#ctl button').forEach(b => b.classList.remove('down')); }
+  _stickRest() {
+    this.stickEl.classList.remove('on');
+    for (const key of ['left', 'top', 'width', 'height', 'margin']) this.stickEl.style[key] = '';
+    for (const key of ['width', 'height', 'margin', 'transform']) this.knob.style[key] = '';
+  }
+  reset() {
+    this.move.x = this.move.y = 0; this.look.dx = this.look.dy = 0;
+    this.fireHeld = false; this.fireTap = false; this.fireHoldT = 0;
+    this.dashQ = 0; this.ultQ = false; this.pauseQ = false; this.muteQ = false;
+    this.tap = null; this.anyQ = false;
+    this.pointers.clear(); this._stickRest(); this.kb.clear(); this.mouseDown = false;
+    document.querySelectorAll('#ctl button').forEach(b => b.classList.remove('down'));
+  }
   // called once per frame by the game; returns a snapshot, consumes edge triggers
   poll(dt) {
     const s = this.state || (this.state = { mx: 0, my: 0, ldx: 0, ldy: 0, fire: false, fireTap: false, fireHold: 0, dash: false, ult: false, pause: false, mute: false, tap: null, any: false, kb: false, gp: false });
+    s.kb = false; s.gp = false;
     let mx = this.move.x, my = this.move.y;
     const k = this.kb; let kx = 0, ky = 0;
     if (k.has('KeyW') || k.has('ArrowUp')) ky += 1; if (k.has('KeyS') || k.has('ArrowDown')) ky -= 1; if (k.has('KeyD') || k.has('ArrowRight')) kx += 1; if (k.has('KeyA') || k.has('ArrowLeft')) kx -= 1;
