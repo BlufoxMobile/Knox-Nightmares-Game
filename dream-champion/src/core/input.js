@@ -52,13 +52,14 @@ export class Input {
         down(e); this.anyQ = true;                                   // act FIRST: a capture failure must never eat a press
         try { el.setPointerCapture(e.pointerId); } catch (_) { }     // throws (NotFoundError) on some iOS pointer states
       });
-      // A finger that lands on a button and then SWEEPS is asking to turn, not to press. The right thumb
-      // lives on BLAST, so until now the only hand free to steer was the one already holding the stick --
-      // which is exactly why turning meant letting go of the stick first. Past btnSlop the press is undone
-      // and the SAME finger is handed to the look system from where it is now, so the camera does not jump.
+      // Hand a sweeping button finger to look without a camera jump. BLAST keeps
+      // firing during the drag; one right thumb can shoot and aim simultaneously.
       el.addEventListener('pointermove', e => {
         if (pid === -1 || e.pointerId !== pid || e.pointerType === 'mouse') return;
         if (Math.hypot(e.clientX - ox, e.clientY - oy) <= this.btnSlop) return;
+        // BLAST doubles as a look surface: dragging aims WITHOUT releasing fire.
+        // Dash/Breaker still cancel their buffered action when handed to look.
+        if (id === 'bFire') { this._adoptLook(e); return; }
         rel(e); undo && undo(); this._adoptLook(e);
       });
       el.addEventListener('pointerup', rel); el.addEventListener('pointercancel', rel); el.addEventListener('lostpointercapture', rel);
@@ -117,9 +118,9 @@ export class Input {
       else if (p.zone === 'look') { const d2 = Math.hypot(e.clientX - p.ox, e.clientY - p.oy); if (d2 > p.drift) p.drift = d2; }
       // tap-to-target: judged by how far the finger DRIFTED (p.slip), not by accumulated path length —
       // a wobbly thumb tap used to fail at ~10px of jitter
-      if (p.zone === 'look' && !p.consumed && p.drift < this.tapMax && performance.now() - p.t < this.tapMs) { this.tap = { x: p.ox, y: p.oy }; }
+      if (e.type === 'pointerup' && p.zone === 'look' && !p.consumed && p.drift < this.tapMax && performance.now() - p.t < this.tapMs) { this.tap = { x: p.ox, y: p.oy }; }
     };
-    app.addEventListener('pointerup', end); app.addEventListener('pointercancel', end);
+    app.addEventListener('pointerup', end); app.addEventListener('pointercancel', end); app.addEventListener('lostpointercapture', end);
     app.addEventListener('contextmenu', e => e.preventDefault());
     addEventListener('keydown', e => {
       if (e.repeat) return; this.kb.add(e.code); document.body.classList.add('nokb'); this.anyQ = true;

@@ -6,6 +6,7 @@ import { HeroGear } from './HeroGear.js';
 import { P } from '../render/particles.js';
 import { AMMO } from './data/enemies.js';
 import { COPY } from './data/copy.js';
+import { steerHeading } from '../core/steering.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -27,7 +28,8 @@ export class Player {
     this.roll = { t: -1, dirx: 0, dirz: 0, charges: ROLL.charges, refill: 0, buffered: false, perfect: false };
     this.fireCd = 0; this.aimW = 0; this.aimT = 0; this.combatT = 0; this.chargeT = 0; this.charging = false; this.locked = null; this.lockT = 0; this.tapLock = 0;
     this.cam = { yaw: Math.PI, pitch: -0.17, dist: 5.0, targetDist: 5.0, fov: 50, pos: new THREE.Vector3(), lookAt: new THREE.Vector3(), shoulder: 0.55, side: 1, autoT: 0, sway: 0, fovKick: 0 };   // fovKick MUST start at 0: undefined made the fov expression NaN, so the camera silently kept whatever fov the title/cine camera left behind (38deg) until the first shot
-    this.idleT = 0;   // seconds since the stick was released; gates the camera easing round behind him
+    this.steering = { active: false, angle: 0, yaw: Math.PI };
+    this.moveYaw = null;
     this.shakeT = 0; this.trauma = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
     this.ammoKey = 'starfire'; this.ammo = AMMO.starfire; this.swim = false; this.bob = 0; this.footT = 0; this.lampOn = true;
     this.root = new THREE.Group(); ctx.scene.add(this.root); this.visible = true;
@@ -55,7 +57,7 @@ export class Player {
   setWorld(theme) {
     this.swim = !!theme.underwater; this.ammoKey = theme.ammo; this.ammo = AMMO[theme.ammo]; this.gear.blaster.glowMat.emissive.set(this.ammo.color); this.gear.blaster.glowMat.color.set(this.ammo.color);
     this.hp = this.maxhp; this.ult = 0; this.combo = 1; this.comboT = 0; this.alive = true; this.dead = false; this.roll.charges = ROLL.charges; this.iframes = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
-    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.cam.occl = undefined; this.locked = null; this.idleT = 0;
+    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.cam.occl = undefined; this.locked = null; this.steering.active = false; this.moveYaw = null; this.cam.autoT = 0;
     this.anim.stopAll(); this.anim.play(this.swim ? 'swim_idle' : 'combat_idle', 0); this.root.visible = true; this.combatT = 0;
     this.y = this.swim ? 0.35 : 0;
   }
@@ -73,15 +75,13 @@ export class Player {
     const friction = this.locked ? (this.lockAng < 3 * Math.PI / 180 ? 0.4 : this.lockAng < 6 * Math.PI / 180 ? 0.55 : 1) : 1;
     this.cam.yaw -= yawIn * friction; this.cam.pitch = clamp(this.cam.pitch - pitchIn * friction, this.swim ? -1.1 : -0.95, this.swim ? 0.9 : 0.42);
     const looking = Math.abs(inp.ldx) + Math.abs(inp.ldy) > 0.5; if (looking) this.cam.autoT = 0.5; else this.cam.autoT -= step;
-    // Movement: LIVE camera-relative, every frame. The direction under the thumb is that direction on screen,
-    // right now, with no history. The previous version froze the mapping for the duration of a push so the
-    // camera could swing without dragging the controls round with it -- but that made the mapping stale by
-    // however far the camera had travelled: measured mid-hold after a 179deg swing, thumb-UP drove Knox 3.01 m
-    // BACKWARDS. Staleness is not an acceptable price, so the camera gives way instead (see the follow below).
+    // Hold a world heading during a steady push; intentional stick changes use the
+    // current view. Camera follow must never feed its own rotation back into movement.
     let mx = inp.mx, my = inp.my; let ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; ml = 1; }
     const moving = ml > 0.05;
-    const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy), rx = -Math.cos(cy), rz = Math.sin(cy);
-    const wantX = fx * my + rx * mx, wantZ = fz * my + rz * mx;
+    this.moveYaw = steerHeading(this.steering, mx, my, this.cam.yaw, -yawIn * friction);
+    const wantX = moving ? Math.sin(this.moveYaw) * ml : 0;
+    const wantZ = moving ? Math.cos(this.moveYaw) * ml : 0;
     const maxSp = (this.swim ? 5.6 : 6.4) * (this.buffs.quick > 0 ? 1.15 : 1);
     // roll
     const R = this.roll;
@@ -138,25 +138,14 @@ export class Player {
     this.updateLock(step, inp, enemies);
     const wantAim = inp.fire || (this.locked && g.autoBlast) || this.charging; this.aimT = wantAim ? 0.35 : Math.max(0, this.aimT - step);
     const aiming = this.aimT > 0 && R.t < 0; this.aimW = damp(this.aimW, aiming ? 1 : 0, aiming ? 14 : 5, step);
-    // facing: toward target when aiming, else move direction, else camera
-    //
-    // A lock used to pin his body at the enemy unconditionally, which is right while he is shooting and is
-    // moon-walking the rest of the time: measured, locked onto a stalker 6 m ahead and pushing the stick
-    // straight back, he covered 9.24 m in 1.5 s with his body a full 180deg off his travel direction --
-    // "the character will just back up but not actually turn around" in the player's words. So the lock
-    // gives his body back once he is CLEARLY running away (>110deg off the bearing) and is not asking to
-    // shoot. Auto-blast cannot be the test here: with it on, aimT is high the whole time a lock exists.
+    // Movement wins over old targets, including while BLAST is held. Aim assist is
+    // restricted to the chosen heading, so an enemy behind cannot pin Knox in place.
     let targetYaw = this.faceYaw;
-    const shooting = inp.fire || this.charging;
-    let flee = false;
-    if (this.locked && moving && !shooting) {
-      const bx = this.locked.x - this.x, bz = this.locked.z - this.z; const bl = Math.hypot(bx, bz);
-      if (bl > 1e-3) flee = (wantX * bx + wantZ * bz) / (bl * ml) < -0.34;
-    }
-    if (this.locked && !flee) { targetYaw = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); }
-    else if (aiming && !flee) targetYaw = this.cam.yaw; else if (moving) targetYaw = Math.atan2(this.vx, this.vz); else if (R.t >= 0) targetYaw = Math.atan2(R.dirx, R.dirz);
-    if (R.t >= 0 && !this.locked) targetYaw = Math.atan2(R.dirx, R.dirz);
-    this.faceYaw = dampAng(this.faceYaw, targetYaw, this.locked && !flee ? 22 : 14, step);
+    if (R.t >= 0) targetYaw = Math.atan2(R.dirx, R.dirz);
+    else if (this.locked) targetYaw = Math.atan2(this.locked.x - this.x, this.locked.z - this.z);
+    else if (moving) targetYaw = this.moveYaw;
+    else if (aiming || looking) targetYaw = this.cam.yaw;
+    this.faceYaw = dampAng(this.faceYaw, targetYaw, 18, step);
     // firing
     let autoOk = false;
     // 45deg = half the horizontal FOV on a phone at the 50deg vertical FOV: auto-blast anything ON SCREEN when it is close, but never
@@ -169,34 +158,13 @@ export class Player {
     else if (fireHeld && this.fireCd <= 0 && (R.t < 0 || R.t >= 0.30)) { this.fireShot(false); this.fireCd = 1 / (this.ammo.rate * (this.buffs.overcharge > 0 ? 1.35 : 1)); }
     if (inp.ult && this.ult >= 100) g.breaker(this);
     this.combatT = enemies.some(e => e.alive) ? 3 : Math.max(0, this.combatT - step);
-    // camera follow (fixed for determinism, smoothed in update)
-    // Camera follow: ONLY while the stick is up.
-    //
-    // While a thumb is down the camera holds absolutely still, because under live camera-relative control the
-    // stick's own lateral angle IS the gap between the camera and Knox's heading. Any camera that closes that
-    // gap therefore turns at a rate set by the stick and never arrives -- holding a diagonal would walk him
-    // round a circle, and holding left would eventually make left mean right. There is no clever version of
-    // this: follow-while-steering and a stable mapping are the same knob pulled in opposite directions.
-    //
-    // On release the camera is free, because with no thumb down there is no mapping left to corrupt. That is
-    // the turn-around: push the way you want to go, let go, and the view swings round behind him. The window
-    // closes after a couple of seconds so it never fights a player who dragged the camera somewhere on purpose.
-    this.idleT = moving ? 0 : this.idleT + step;
-    if (this.cam.autoT <= 0 && !this.locked && this.idleT > 0.28 && this.idleT < 2.4) {
-      let dd = angDiff(this.cam.yaw, this.faceYaw);
-      // A dead-straight about-face puts the camera exactly opposite his facing, where "shortest way round" has
-      // no answer and the swing can sit on the fence. Pushing straight back IS the natural way to ask to turn
-      // around, so bias off the antipode and always commit to a side.
-      if (Math.abs(dd) > Math.PI - 1e-3) dd = (dd < 0 ? -1 : 1) * (Math.PI - 1e-3);
-      if (Math.abs(dd) > 0.04) this.cam.yaw += clamp(dd * 3.0, -3.0, 3.0) * step;
+    // Follow throughout the turn, not only after releasing the stick. Manual look
+    // temporarily owns the camera; follow resumes smoothly after the gesture ends.
+    if (this.cam.autoT <= 0) {
+      const followYaw = R.t >= 0 ? Math.atan2(R.dirx, R.dirz) : moving ? this.moveYaw : this.faceYaw;
+      const dd = angDiff(this.cam.yaw, followYaw);
+      this.cam.yaw += clamp(dd * 7, -4.8, 4.8) * step;
     }
-    // Pull the camera onto the locked enemy. The old 1.6 rad gate meant anything behind Knox was never brought
-    // into view, which is exactly the zombie-behind-you case; allow up to 150deg and let it come round.
-    // ...and while he is fleeing the lens goes with him rather than being dragged back onto what he is
-    // running from -- otherwise his body turns to face his escape and the camera immediately looks away
-    // from it again. This cannot run away with itself: the pull's target is a WORLD bearing, and rotating
-    // the camera toward it rotates his live heading by the same amount, so the flee angle only ever shrinks.
-    if (this.locked && !looking && !flee && this.lockAng < 2.6) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 1.6, -1.9, 1.9) * step; }
     this.cam.targetDist = (g.bossActive ? 6.0 : 5.0) - (aiming ? 0.7 : 0) + (this.swim ? 0.8 : 0);
     // shield/overcharge visuals
     if (this.buffs.shield > 0 && Math.random() < 0.3) this.ctx.particlesAdd.one(this.x + rnd(-.5, .5), this.y + rnd(0.2, 1.6), this.z + rnd(-.5, .5), { type: P.DOT, color: new THREE.Color(0xffcf4a), life: 0.5, size: 0.15, sizeEnd: 0, vx: 0, vy: 0.4, vz: 0 });
@@ -216,13 +184,17 @@ export class Player {
       let best = null, bd = 80; for (const e of enemies) { if (!e.alive) continue; _v.set(e.x, (e.y || 0) + e.height * 0.6, e.z).project(cam); if (_v.z > 1) continue; const sx = (_v.x + 1) / 2 * innerWidth, sy = (1 - _v.y) / 2 * innerHeight; const d = Math.hypot(sx - inp.tap.x, sy - inp.tap.y); if (d < bd) { bd = d; best = e; } }
       if (best) { this.locked = best; this.tapLock = 2; this.lockT = 0.12; }
     }
-    const cy = this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy);
-    // angle to the current lock: needed by the tap-lock path too (auto-blast gate + camera pull)
-    if (this.locked && this.locked.alive) { const dx = this.locked.x - this.x, dz = this.locked.z - this.z; const d = Math.hypot(dx, dz) || 1; this.lockAng = Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)); }
+    const cy = this.moveYaw ?? this.cam.yaw; const fx = Math.sin(cy), fz = Math.cos(cy);
+    const inCone = e => e && e.alive && !e.noLock &&
+      Math.hypot(e.x - this.x, e.z - this.z) <= 26 &&
+      Math.abs(angDiff(cy, Math.atan2(e.x - this.x, e.z - this.z))) <= Math.PI / 6;
+    if (!inCone(this.locked)) { this.locked = null; this.tapLock = 0; this.lockT = 0; }
+    // Visibility stays camera-relative even when movement has selected a new heading.
+    if (this.locked) this.lockAng = Math.abs(angDiff(this.cam.yaw, Math.atan2(this.locked.x - this.x, this.locked.z - this.z)));
     if (this.tapLock > 0) { this.tapLock -= step; if (this.locked && this.locked.alive) { this.lockT += step; return; } this.tapLock = 0; }
     let best = null, bs = -1;
     for (const e of enemies) {
-      if (!e.alive || e.noLock) continue; const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz); if (d > 26 || d < 0.01) continue;
+      if (!inCone(e)) continue; const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz); if (d > 26 || d < 0.01) continue;
       const ang = Math.acos(clamp((dx * fx + dz * fz) / d, -1, 1)); if (ang > 60 * Math.PI / 180 && d > 3.5) continue;
       const threat = e.windup > 0 ? 1 : d < 3 ? 0.5 : 0; const s = 0.55 * (1 - ang / (30 * Math.PI / 180)) + 0.3 * (1 - d / 26) + 0.15 * threat + (e.boss ? 0.05 : 0);
       if (s > bs) { bs = s; best = e; }
@@ -231,13 +203,21 @@ export class Player {
     else this.lockHold = 0;
     if (best && best !== this.locked) { const cur = this.locked && this.locked.alive ? this.scoreOf(this.locked) : -9; if (bs > cur + 0.15 || !this.locked) { this.locked = best; this.lockT = 0; } }
     if (!best && (!this.locked || !this.locked.alive)) this.locked = null;
-    if (this.locked) this.lockT += step;
+    if (this.locked) {
+      this.lockT += step;
+      this.lockAng = Math.abs(angDiff(this.cam.yaw, Math.atan2(this.locked.x - this.x, this.locked.z - this.z)));
+    }
   }
-  scoreOf(e) { const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz) || 1; const cy = this.cam.yaw; const ang = Math.acos(clamp((dx * Math.sin(cy) + dz * Math.cos(cy)) / d, -1, 1)); return 0.55 * (1 - ang / (30 * Math.PI / 180)) + 0.3 * (1 - d / 26); }
+  scoreOf(e) { const dx = e.x - this.x, dz = e.z - this.z; const d = Math.hypot(dx, dz) || 1; const cy = this.moveYaw ?? this.cam.yaw; const ang = Math.acos(clamp((dx * Math.sin(cy) + dz * Math.cos(cy)) / d, -1, 1)); return 0.55 * (1 - ang / (30 * Math.PI / 180)) + 0.3 * (1 - d / 26); }
+  shotTarget() {
+    const e = this.locked;
+    return e && e.alive && Math.abs(angDiff(this.faceYaw, Math.atan2(e.x - this.x, e.z - this.z))) < 0.35 ? e : null;
+  }
   aimPoint(out) {
-    if (this.locked && this.locked.alive) { const e = this.locked; const lead = Math.hypot(e.x - this.x, e.z - this.z) / this.ammo.speed; const headAim = !e.boss && (e.windup > 0 || e.state === 'scream' || e.state === 'stun' || this.headBias); out.set(e.x + (e.vx || 0) * lead, (e.y || 0) + (e.boss ? e.height * 0.5 : headAim ? (e.headY ?? e.height * 0.9) - 0.05 : e.height * 0.62), e.z + (e.vz || 0) * lead); return out; }
-    // camera ray at 30 m
-    const cy = this.cam.yaw, cp = this.cam.pitch; out.set(this.x + Math.sin(cy) * Math.cos(cp) * 30, this.y + 1.3 + Math.sin(cp) * 30, this.z + Math.cos(cy) * Math.cos(cp) * 30); return out;
+    const aimTarget = this.shotTarget();
+    if (aimTarget) { const e = aimTarget; const lead = Math.hypot(e.x - this.x, e.z - this.z) / this.ammo.speed; const headAim = !e.boss && (e.windup > 0 || e.state === 'scream' || e.state === 'stun' || this.headBias); out.set(e.x + (e.vx || 0) * lead, (e.y || 0) + (e.boss ? e.height * 0.5 : headAim ? (e.headY ?? e.height * 0.9) - 0.05 : e.height * 0.62), e.z + (e.vz || 0) * lead); return out; }
+    // Fire along Knox's facing while the camera catches up to his turn.
+    const cy = this.faceYaw, cp = this.cam.pitch; out.set(this.x + Math.sin(cy) * Math.cos(cp) * 30, this.y + 1.3 + Math.sin(cp) * 30, this.z + Math.cos(cy) * Math.cos(cp) * 30); return out;
   }
   fireShot(charged) {
     const g = this.game, A = this.ammo; const mz = this.muzzleW; this.headBias = Math.random() < 0.22; const target = this.aimPoint(_v2); this.headBias = false;
@@ -246,7 +226,7 @@ export class Player {
     const shots = charged && A.charge.spread ? A.charge.spread : (over && A.style === 'bolt' ? 3 : 1);
     for (let i = 0; i < shots; i++) {
       const spread = shots > 1 ? (i - (shots - 1) / 2) * 0.12 : 0; const sx = dx * Math.cos(spread) - dz * Math.sin(spread), sz = dx * Math.sin(spread) + dz * Math.cos(spread);
-      g.projectiles.fire({ x: mz.x, y: mz.y, z: mz.z, dx: sx, dy: dy + (A.style === 'disc' ? 0.12 : 0), dz: sz, speed: A.speed * (charged ? 1.2 : 1), life: A.life * (charged ? 1.5 : 1), dmg: (charged ? A.charge.dmg || A.dmg : A.dmg) * dmgMul, head: (charged ? A.charge.dmg || A.head : A.head) * dmgMul, style: A.style, color: over ? 0xff4d4d : A.color, aoe: charged ? (A.charge.aoe || A.aoe || 0) : (A.aoe || 0), homing: A.homing, target: this.locked, pierce: charged && A.charge.pierce, knock: charged ? A.charge.knock : 0, sever: A.sever, charge: charged, bend: 60 });
+      g.projectiles.fire({ x: mz.x, y: mz.y, z: mz.z, dx: sx, dy: dy + (A.style === 'disc' ? 0.12 : 0), dz: sz, speed: A.speed * (charged ? 1.2 : 1), life: A.life * (charged ? 1.5 : 1), dmg: (charged ? A.charge.dmg || A.dmg : A.dmg) * dmgMul, head: (charged ? A.charge.dmg || A.head : A.head) * dmgMul, style: A.style, color: over ? 0xff4d4d : A.color, aoe: charged ? (A.charge.aoe || A.aoe || 0) : (A.aoe || 0), homing: A.homing, target: this.shotTarget(), pierce: charged && A.charge.pierce, knock: charged ? A.charge.knock : 0, sever: A.sever, charge: charged, bend: 60 });
     }
     // muzzle fx
     const col = new THREE.Color(over ? 0xff4d4d : A.color);
