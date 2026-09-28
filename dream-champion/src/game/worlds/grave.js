@@ -10,7 +10,7 @@ export const THEME = {
   key: 'grave', name: 'GRAVEROT', sub: 'Zombies', tagline: 'The dead are done waiting.', boss: 'rotking', bossName: 'THE ROT KING', bossTitle: 'LORD OF GRAVEROT', bossQuote: '"Kneel. There\'s a grave with your name on it."', ammo: 'bonesaw', accent: 0x7dff6a, radius: 19, underwater: false,
   sky: { zenith: 0x05080c, horizon: 0x1c2a22, ground: 0x030403, moonColor: 0xb8ffc4, moonDir: dir3(0.55, 0.36, -0.75), moonSize: 0.014, moonGlow: 0.9, stars: 0.6, clouds: 0.6, cloudColor: 0x223026, aurora: 0, underwater: 0 },
   rig: { hemi: [0x4a6a52, 0x10130d, 2.5], key: [0xb8ffc4, 2.8], keyDir: [0.55, 0.85, -0.75], rim: [0x8a7cc8, 1.3], rimDir: [-12, 6, 12], lamp: [0xffd9a0, 60, 16], fog: [0x121a14, 0.046], env: 0.25 },
-  grade: { exposure: 1.2, lift: [0.012, 0.02, 0.012], gain: [0.94, 1.04, 0.96], saturation: 0.8, contrast: 0.98, bloom: 0.6, vignette: 0.5 },
+  grade: { exposure: 1.2, lift: [0.012, 0.02, 0.012], gain: [0.94, 1.04, 0.96], saturation: 0.8, contrast: 0.98, bloom: 0.5, vignette: 0.5 },
   music: { bed: 'grave_bed', combat: 'grave_combat', boss: 'grave_boss' },
 };
 

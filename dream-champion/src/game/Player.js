@@ -97,18 +97,32 @@ export class Player {
     //
     // The dilemma was false. Only the every-frame absolute reading has to go. A fresh push is camera-relative,
     // so pushing a direction always sets off that way on screen. While held, a SMALL turn of the thumb (under
-    // 40deg) turns his heading by the same amount -- a steering wheel, so jitter can never flip him -- and a
-    // LARGE turn is read fresh against the screen, so after pulling back and letting the camera come round,
-    // pushing straight up means forward in the new view without lifting the thumb. The heading never reads
+    // 40deg) turns his heading by the same amount -- a steering wheel, so jitter can never flip him -- and the
+    // bigger the move, the more the reading is re-based on the live camera, so after pulling back and letting
+    // the camera come round, pushing straight up means forward in the new view without lifting the thumb. The heading never reads
     // the camera on its own, so the follow always converges. 'twin' control mode is the classic shooter
     // scheme instead: live camera-relative, no follow.
     let mx = inp.mx, my = inp.my; let ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; ml = 1; }
     const moving = ml > 0.05; const M = this.moveRef; const twin = g.save.data.settings.controlMode === 'twin';
     if (!moving) M.on = false;
     else {
-      const sa = Math.atan2(mx, my); const d = M.on ? angDiff(M.stick, sa) : 0;
-      if (twin || !M.on || Math.abs(d) >= 0.7) { M.on = true; M.head = this.cam.yaw - sa; }   // read against the screen
-      else M.head -= d;                                                                           // steer
+      const sa = Math.atan2(mx, my);
+      if (twin || !M.on) { M.on = true; M.head = this.cam.yaw - sa; }                     // fresh push: read against the screen
+      else {
+        const d = angDiff(M.stick, sa);
+        M.head -= d;                                                                       // steering wheel: the thumb's own turn
+        // The frame the thumb is read in was frozen at the push; the camera has since come round behind him.
+        // Rather than a hard 40deg cliff between "steer" and "re-read", let the frame catch up with the live
+        // camera in PROPORTION to how far the thumb just moved: nothing for a 5deg wobble, a little for a nudge,
+        // all of it for a real move. A nudge steers, a real move lands where the thumb points on screen, and a
+        // wobble on a held-back stick cannot flip him (a 20 Hz +-5deg wobble drifts him ~1deg/s).
+        const ex = Math.max(0, Math.abs(d) - 0.09); const room = 3.0 * ex * Math.min(1, ex / 0.35);
+        if (room > 0) {
+          let dd = angDiff(M.head, this.cam.yaw - sa);
+          if (Math.abs(dd) > Math.PI - 0.05) dd = (sa < 0 ? 1 : -1) * Math.PI;             // dead astern: come round on the thumb's side
+          M.head += clamp(dd, -room, room);
+        }
+      }
       M.stick = sa;
     }
     this.moveYaw = moving ? M.head : null;

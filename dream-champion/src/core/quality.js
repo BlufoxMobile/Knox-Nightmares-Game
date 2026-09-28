@@ -2,8 +2,8 @@
 import { save } from './save.js';
 
 export const TIERS = {
-  high:   { dpr: 2.0, msaa: 4, shadow: 2048, shadowCasters: 'all', bloom: true, rays: true, grain: true, ca: true, particles: 2048, decals: 256, grass: 1500, trees: 60, lod: 0, env: 256, aniso: 4, heightFog: true, dynMin: 0.75 },
-  medium: { dpr: 1.5, msaa: 2, shadow: 1024, shadowCasters: 'chars', bloom: true, rays: false, grain: true, ca: false, particles: 1024, decals: 128, grass: 700, trees: 40, lod: 0, env: 128, aniso: 2, heightFog: true, dynMin: 0.7 },
+  high:   { dpr: 2.0, msaa: 4, shadow: 2048, shadowCasters: 'all', bloom: true, rays: true, grain: true, ca: true, particles: 2048, decals: 256, grass: 1500, trees: 60, lod: 0, env: 256, aniso: 4, heightFog: true, dynMin: 0.85 },
+  medium: { dpr: 1.5, msaa: 2, shadow: 1024, shadowCasters: 'chars', bloom: true, rays: false, grain: true, ca: false, particles: 1024, decals: 128, grass: 700, trees: 40, lod: 0, env: 128, aniso: 2, heightFog: true, dynMin: 0.8 },
   low:    { dpr: 1.25, msaa: 2, ldr: true, shadow: 512, shadowCasters: 'hero', bloom: false, rays: false, grain: false, ca: false, particles: 512, decals: 64, grass: 300, trees: 24, lod: 1, env: 64, aniso: 1, heightFog: false, dynMin: 0.6 },
 };
 export const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
@@ -38,8 +38,10 @@ export class DynamicResolution {
     this.cool -= dt; if (this.cool > 0 || this.samples.length < 45) return false;
     const sorted = [...this.samples].sort((a, b) => a - b); const p90 = sorted[Math.floor(sorted.length * 0.9)];
     let changed = false;
-    if (p90 > 19.5 && this.scale > this.min) { this.scale = Math.max(this.min, this.scale - 0.1); changed = true; }
-    else if (p90 < 17.5 && this.scale < 1) { this.scale = Math.min(1, this.scale + 0.05); changed = true; }
+    // Crispness is the priority: only give up resolution when frames are genuinely long (p90 past ~45 fps),
+    // never below dynMin, and climb back to native quickly once the load eases.
+    if (p90 > 22 && this.scale > this.min) { this.scale = Math.max(this.min, this.scale - 0.05); changed = true; }
+    else if (p90 < 18.5 && this.scale < 1) { this.scale = Math.min(1, this.scale + 0.1); changed = true; }
     if (changed) { this.cool = 2.5; this.samples.length = 0; }
     return changed;
   }

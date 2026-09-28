@@ -12,7 +12,7 @@ export const THEME = {
   // Brightness was measured, not guessed: the forest averaged 28/255 with 41% of the frame under 20 -- the player
   // could not see the monsters because he could not see anything. Exposure, a lifted black floor, more hemisphere
   // fill and a lighter vignette bring the mean up without turning night into day (see grave.js / sea.js too).
-  grade: { exposure: 1.34, lift: [0.018, 0.016, 0.03], gain: [1.02, 0.95, 1.0], saturation: 0.88, contrast: 0.97, bloom: 0.55, vignette: 0.46 },
+  grade: { exposure: 1.34, lift: [0.018, 0.016, 0.03], gain: [1.02, 0.95, 1.0], saturation: 0.88, contrast: 0.97, bloom: 0.45, vignette: 0.46 },
   music: { bed: 'forest_bed', combat: 'forest_combat', boss: 'forest_boss' },
 };
 

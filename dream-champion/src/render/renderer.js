@@ -22,7 +22,7 @@ const COMPOSITE_FS = `
 uniform sampler2D scene; uniform sampler2D bloomA; uniform sampler2D bloomB; uniform float bloomStrength; uniform float exposure;
 uniform vec3 lift; uniform vec3 gain; uniform float saturation; uniform float contrast; uniform float vignette; uniform float ca; uniform float grain; uniform float time;
 uniform float underwater; uniform float hurt; uniform float flash; uniform vec3 flashColor; uniform float ultRing; uniform vec2 ultCenter; uniform float fade; uniform float desat; uniform float bloomOn;
-uniform float visionOn; uniform vec2 res;
+uniform float visionOn; uniform vec2 res; uniform float sharp;
 varying vec2 vUv;
 vec3 aces(vec3 x){ const float a=2.51,b=.03,c=2.43,d=.59,e=.14; return clamp((x*(a*x+b))/(x*(c*x+d)+e),0.,1.); }
 float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * .1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
@@ -32,9 +32,17 @@ void main(){
   vec3 col;
   if (ca > 0. && r2 > .06) { vec2 d = cuv * ca * (r2 - .06) * 2.2; col = vec3(texture2D(scene, uv + d).r, texture2D(scene, uv).g, texture2D(scene, uv - d).b); }
   else col = texture2D(scene, uv).rgb;
-  if (bloomOn > .5) { vec3 bl = texture2D(bloomA, uv).rgb * .7 + texture2D(bloomB, uv).rgb * .45; col += bl * bloomStrength; }
-  col *= exposure;
-  col = aces(col);
+  vec3 bl = vec3(0.);
+  if (bloomOn > .5) { bl = (texture2D(bloomA, uv).rgb * .7 + texture2D(bloomB, uv).rgb * .45) * bloomStrength; col += bl; }
+  col = aces(col * exposure);
+  // unsharp mask in display space (after the tone curve, so it cannot ring on HDR highlights): puts the edge
+  // definition back that the softer grade and any dynamic-resolution step take away.
+  if (sharp > 0.) {
+    vec2 t = 1. / res;
+    vec3 b = aces((texture2D(scene, uv + vec2( t.x,  t.y)).rgb + bl) * exposure) + aces((texture2D(scene, uv + vec2(-t.x,  t.y)).rgb + bl) * exposure)
+           + aces((texture2D(scene, uv + vec2( t.x, -t.y)).rgb + bl) * exposure) + aces((texture2D(scene, uv + vec2(-t.x, -t.y)).rgb + bl) * exposure);
+    col = clamp(col + (col - b * .25) * sharp, 0., 1.);
+  }
   // grade
   col = col * gain + lift;
   float lum = dot(col, vec3(.2126,.7152,.0722)); col = mix(vec3(lum), col, saturation);
@@ -91,7 +99,7 @@ export class Renderer {
     this.quad = new THREE.Mesh(this.quadGeo); this.quad.frustumCulled = false; this.quadScene = new THREE.Scene(); this.quadScene.add(this.quad); this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
     this.matBright = mk(BRIGHT_FS, { tex: { value: null }, threshold: { value: 1.0 }, knee: { value: 0.5 }, texel: { value: new THREE.Vector2() } });
     this.matKawase = mk(KAWASE_FS, { tex: { value: null }, texel: { value: new THREE.Vector2() }, off: { value: 1 } });
-    this.matComp = mk(COMPOSITE_FS, { scene: { value: null }, bloomA: { value: null }, bloomB: { value: null }, bloomStrength: { value: 0.6 }, exposure: { value: 1 }, lift: { value: new THREE.Vector3() }, gain: { value: new THREE.Vector3(1, 1, 1) }, saturation: { value: 1 }, contrast: { value: 1 }, vignette: { value: .45 }, ca: { value: 0 }, grain: { value: 0 }, time: { value: 0 }, underwater: { value: 0 }, hurt: { value: 0 }, flash: { value: 0 }, flashColor: { value: new THREE.Color() }, ultRing: { value: 0 }, ultCenter: { value: new THREE.Vector2(.5, .5) }, fade: { value: 1 }, desat: { value: 0 }, bloomOn: { value: 1 }, visionOn: { value: 0 }, res: { value: new THREE.Vector2(1, 1) } });
+    this.matComp = mk(COMPOSITE_FS, { scene: { value: null }, bloomA: { value: null }, bloomB: { value: null }, bloomStrength: { value: 0.6 }, exposure: { value: 1 }, lift: { value: new THREE.Vector3() }, gain: { value: new THREE.Vector3(1, 1, 1) }, saturation: { value: 1 }, contrast: { value: 1 }, vignette: { value: .45 }, ca: { value: 0 }, grain: { value: 0 }, time: { value: 0 }, underwater: { value: 0 }, hurt: { value: 0 }, flash: { value: 0 }, flashColor: { value: new THREE.Color() }, ultRing: { value: 0 }, ultCenter: { value: new THREE.Vector2(.5, .5) }, fade: { value: 1 }, desat: { value: 0 }, bloomOn: { value: 1 }, visionOn: { value: 0 }, res: { value: new THREE.Vector2(1, 1) }, sharp: { value: 0 } });
   }
   resize(force) {
     const w = innerWidth, h = innerHeight; const dpr = Math.min(devicePixelRatio || 1, this.tier.dpr) * this.dyn.scale;
@@ -123,7 +131,8 @@ export class Renderer {
     } else u.bloomOn.value = 0;
     const g = this.grade, f = this.fx;
     u.scene.value = this.rtScene.texture; u.bloomStrength.value = g.bloom; u.exposure.value = g.exposure; u.lift.value.copy(g.lift); u.gain.value.copy(g.gain); u.saturation.value = g.saturation; u.contrast.value = g.contrast; u.vignette.value = g.vignette;
-    u.ca.value = T.ca ? 1.5 / this.pw * 3 : 0; u.grain.value = T.grain ? 0.03 : 0; u.time.value = time;
+    u.ca.value = T.ca ? 1.5 / this.pw * 1.5 : 0; u.grain.value = T.grain ? 0.018 : 0; u.time.value = time;
+    u.sharp.value = T.ldr ? 0 : 0.3 + (1 - this.dyn.scale) * 1.5;   // sharper still when the scaler has stepped down
     u.underwater.value = f.underwater; u.hurt.value = f.hurt; u.flash.value = f.flash; u.flashColor.value.copy(f.flashColor); u.ultRing.value = f.ultRing; u.ultCenter.value.copy(f.ultCenter); u.fade.value = f.fade; u.desat.value = f.desat; u.visionOn.value = f.vision;
     this.quad.material = this.matComp; gl.setRenderTarget(null); gl.render(this.quadScene, this.quadCam);
   }
