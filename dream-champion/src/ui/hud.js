@@ -8,6 +8,7 @@ const $ = id => document.getElementById(id);
 const clamp01 = v => v < 0 ? 0 : v > 1 ? 1 : v;
 const DN_POOL = 12;      // damage numbers on screen (review 2.5: cap 12, recycle oldest)
 const DD_POOL = 4;       // simultaneous direction arcs
+const TH_POOL = 6;       // off-screen threat markers (the nearest monster was off screen 38-64% of the time)
 const FEED_MAX = 4;
 
 let el = null;           // element cache, filled by init()
@@ -22,6 +23,7 @@ const last = {           // last written values
 };
 let dnPool = [], dnHead = 0;
 let ddPool = [], ddHead = 0;
+let thPool = [], thMap = new Map();   // marker slots; enemy -> slot
 let flip = { hit: 0, banner: 0, stamp: 0, pickup: 0, bump: 0 };
 
 function init() {
@@ -53,6 +55,18 @@ function init() {
     }
   }
   if (el.killfeed) el.killfeed.addEventListener('animationend', e => { if (e.target.parentNode === el.killfeed) e.target.remove(); });
+  // pooled threat markers: a chevron on an ellipse just inside the screen edge, pointing at the monster.
+  // Built here (container + style) so the HUD markup and stylesheet stay untouched; sits under #vignette.
+  if (el.dmgdir && !$('threats')) {
+    const st = document.createElement('style'); st.textContent = '#threats{position:absolute;inset:0}.th{position:absolute;left:50%;top:50%;width:0;height:0;opacity:0;will-change:transform}.th i{position:absolute;left:-14px;top:-14px;width:28px;height:28px;filter:drop-shadow(0 0 5px rgba(255,36,56,.85))}.th i svg{display:block;width:100%;height:100%;overflow:visible}.th.near i{animation:thnear .5s ease-in-out infinite alternate}.th.boss i{filter:drop-shadow(0 0 6px rgba(255,207,74,.9))}@keyframes thnear{from{transform:scale(1)}to{transform:scale(1.28)}}';
+    document.head.appendChild(st);
+    const wrap = document.createElement('div'); wrap.id = 'threats'; el.dmgdir.parentNode.insertBefore(wrap, el.dmgdir.nextSibling); el.threats = wrap;
+    for (let i = 0; i < TH_POOL; i++) {
+      const d = document.createElement('div'); d.className = 'th';
+      d.innerHTML = '<i><svg viewBox="0 0 28 28" aria-hidden="true"><path d="M6 19 14 7l8 12" fill="none" stroke="#ff2438" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round" opacity=".28"/><path d="M6 19 14 7l8 12" fill="none" stroke="#ff2438" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/></svg></i>';
+      wrap.appendChild(d); thPool.push({ el: d, e: null, a: 9, s: 0, o: 0, near: null, boss: null });
+    }
+  }
   return el;
 }
 
@@ -182,6 +196,25 @@ export const hud = {
     d.dataset.f = d.dataset.f === '1' ? '0' : '1';
   },
 
+  // Persistent edge marker for one off-screen monster. angle: 0 = straight ahead of the camera, +clockwise
+  // (same convention as damageDir); null releases the slot. Closer = bigger and brighter; < 4 m pulses.
+  // Values are quantised so a marker that barely moved writes nothing.
+  threat(e, angle, dist = 10, boss = false) {
+    init();
+    let t = thMap.get(e);
+    if (angle === null || angle === undefined) { if (t) { thMap.delete(e); t.e = null; t.o = 0; t.el.style.opacity = '0'; } return; }
+    if (!t) { t = thPool.find(x => !x.e); if (!t) return; t.e = e; t.a = 9; t.s = 0; t.o = 0; t.near = null; t.boss = null; thMap.set(e, t); }
+    const a = Math.round(angle * 50) / 50, s = Math.round(clamp01(1.45 - dist / 14) * 20) / 20 * 0.85 + 0.45, o = Math.round(clamp01(1.15 - dist / 26) * 20) / 20;
+    if (a !== t.a || s !== t.s) {
+      t.a = a; t.s = s;
+      // ellipse inside the edge: clear of the top bar, the stick and the buttons at 852x393
+      const rx = innerWidth * 0.36, ry = innerHeight * 0.40;
+      t.el.style.transform = 'translate(' + (Math.sin(a) * rx).toFixed(1) + 'px,' + (-Math.cos(a) * ry).toFixed(1) + 'px) rotate(' + a.toFixed(3) + 'rad) scale(' + s.toFixed(2) + ')';
+    }
+    if (o !== t.o) { t.o = o; t.el.style.opacity = String(o); }
+    const near = dist < 4; if (near !== t.near || !!boss !== t.boss) { t.near = near; t.boss = !!boss; t.el.className = 'th' + (near ? ' near' : '') + (boss ? ' boss' : ''); }
+  },
+
   // ---- text moments --------------------------------------------------------------------------------------
   banner(text, size = 'normal') { init(); el.banner.textContent = text; retrigger(el.banner, 'banner', size); },
   stamp(text, color = 'gold') { init(); el.stamp.textContent = text; retrigger(el.stamp, 'stamp', color); },
@@ -248,6 +281,7 @@ export const hud = {
     el.vignette.style.opacity = '0'; el.killfeed.innerHTML = '';
     for (const d of dnPool) { d.className = 'dn'; d.style.opacity = '0'; }
     for (const d of ddPool) { d.className = 'dd'; d.style.opacity = '0'; }
+    for (const t of thPool) { t.e = null; t.o = 0; t.el.style.opacity = '0'; } thMap.clear();
     this.setHP(100, 100); this.setKills(0); this.setStreak(1, 1); this.setUlt(0); this.setDash(2, 2); this.reticle('free');
   },
 };

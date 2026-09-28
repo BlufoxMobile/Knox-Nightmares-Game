@@ -6,7 +6,6 @@ import { HeroGear } from './HeroGear.js';
 import { P } from '../render/particles.js';
 import { AMMO } from './data/enemies.js';
 import { COPY } from './data/copy.js';
-import { steerHeading } from '../core/steering.js';
 
 const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _m = new THREE.Matrix4();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -28,8 +27,11 @@ export class Player {
     this.roll = { t: -1, dirx: 0, dirz: 0, charges: ROLL.charges, refill: 0, buffered: false, perfect: false };
     this.fireCd = 0; this.aimW = 0; this.aimT = 0; this.combatT = 0; this.chargeT = 0; this.charging = false; this.locked = null; this.lockT = 0; this.tapLock = 0;
     this.cam = { yaw: Math.PI, pitch: -0.17, dist: 5.0, targetDist: 5.0, fov: 50, pos: new THREE.Vector3(), lookAt: new THREE.Vector3(), shoulder: 0.55, side: 1, autoT: 0, sway: 0, fovKick: 0 };   // fovKick MUST start at 0: undefined made the fov expression NaN, so the camera silently kept whatever fov the title/cine camera left behind (38deg) until the first shot
-    this.steering = { active: false, angle: 0, yaw: Math.PI };
-    this.moveYaw = null;
+    this.idleT = 0;   // seconds since the stick was released; gates the camera easing round behind him
+    // The heading the stick steers. head is a WORLD angle that only the player moves (fresh push, thumb
+    // turn, or a look drag); the camera follow chases it and never writes to it. stick is the thumb angle
+    // the last change was measured from.
+    this.moveRef = { on: false, head: Math.PI, stick: 0 };
     this.shakeT = 0; this.trauma = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
     this.ammoKey = 'starfire'; this.ammo = AMMO.starfire; this.swim = false; this.bob = 0; this.footT = 0; this.lampOn = true;
     this.root = new THREE.Group(); ctx.scene.add(this.root); this.visible = true;
@@ -57,7 +59,7 @@ export class Player {
   setWorld(theme) {
     this.swim = !!theme.underwater; this.ammoKey = theme.ammo; this.ammo = AMMO[theme.ammo]; this.gear.blaster.glowMat.emissive.set(this.ammo.color); this.gear.blaster.glowMat.color.set(this.ammo.color);
     this.hp = this.maxhp; this.ult = 0; this.combo = 1; this.comboT = 0; this.alive = true; this.dead = false; this.roll.charges = ROLL.charges; this.iframes = 0; this.buffs = { overcharge: 0, vision: 0, quick: 0, shield: 0 };
-    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.cam.occl = undefined; this.locked = null; this.steering.active = false; this.moveYaw = null; this.cam.autoT = 0;
+    this.x = 0; this.z = 4; this.vx = this.vz = 0; this.yaw = Math.PI; this.faceYaw = Math.PI; this.cam.yaw = Math.PI; this.cam.pitch = -0.17; this.cam.init = false; this.cam.occl = undefined; this.locked = null; this.idleT = 0; this.moveRef.on = false; this.moveRef.head = Math.PI; this.cam.autoT = 0;
     this.roll.t = -1; this.roll.refill = 0; this.charging = false; this.chargeT = 0;
     this.fireCd = 0; this.aimT = 0; this.aimW = 0; this.tapLock = 0; this.lockT = 0;
     this.hurtT = 0; this.trauma = 0; this.recoil = 0; this.ultActive = 0;
@@ -77,16 +79,40 @@ export class Player {
     const look = g.save.data.settings.look || 1; const yawIn = inp.ldx * 0.0028 * look, pitchIn = inp.ldy * 0.0022 * look;
     const friction = this.locked ? (this.lockAng < 3 * Math.PI / 180 ? 0.4 : this.lockAng < 6 * Math.PI / 180 ? 0.55 : 1) : 1;
     this.cam.yaw -= yawIn * friction; this.cam.pitch = clamp(this.cam.pitch - pitchIn * friction, this.swim ? -1.1 : -0.95, this.swim ? 0.9 : 0.42);
+    // A camera turn the player asks for with the other thumb carries his heading with it, so dragging still
+    // steers him and the follow below has nothing left to correct. Only the follow's own turns are excluded,
+    // which is exactly why it cannot chase its own tail.
+    if (this.moveRef.on) this.moveRef.head -= yawIn * friction;
     const looking = Math.abs(inp.ldx) + Math.abs(inp.ldy) > 0.5; if (looking) this.cam.autoT = 0.5; else this.cam.autoT -= step;
-    // Hold a world heading during a steady push; intentional stick changes use the
-    // current view. Camera follow must never feed its own rotation back into movement.
+    // Movement: the stick steers a heading RELATIVE to itself, and the camera then follows that heading.
+    //
+    // Two earlier designs each failed on one horn of what looked like a dilemma. Reading the stick's absolute
+    // angle against the live camera every frame (camera-relative) means the stick's own lateral angle IS the
+    // gap the camera is trying to close, so a following camera turns forever and holding left eventually
+    // makes left mean right. Freezing that reading for the whole push instead left it stale by however far
+    // the camera had travelled -- thumb-UP drove him 3.01 m BACKWARDS after a 179deg swing. (A third variant,
+    // re-basing to the live camera whenever the thumb moves more than a few degrees, was live for a week: once
+    // the camera has settled behind him a small wobble on a held-back stick re-reads as "back" against the NEW
+    // view and flips him 180deg.)
+    //
+    // The dilemma was false. Only the every-frame absolute reading has to go. A fresh push is camera-relative,
+    // so pushing a direction always sets off that way on screen. While held, a SMALL turn of the thumb (under
+    // 40deg) turns his heading by the same amount -- a steering wheel, so jitter can never flip him -- and a
+    // LARGE turn is read fresh against the screen, so after pulling back and letting the camera come round,
+    // pushing straight up means forward in the new view without lifting the thumb. The heading never reads
+    // the camera on its own, so the follow always converges. 'twin' control mode is the classic shooter
+    // scheme instead: live camera-relative, no follow.
     let mx = inp.mx, my = inp.my; let ml = Math.hypot(mx, my); if (ml > 1) { mx /= ml; my /= ml; ml = 1; }
-    const moving = ml > 0.05;
-    const twin = g.save.data.settings.controlMode === 'twin';
-    this.moveYaw = twin ? (moving ? this.cam.yaw + Math.atan2(-mx, my) : null) : steerHeading(this.steering, mx, my, this.cam.yaw, -yawIn * friction);
-    if (twin) this.steering.active = false;
-    const wantX = moving ? Math.sin(this.moveYaw) * ml : 0;
-    const wantZ = moving ? Math.cos(this.moveYaw) * ml : 0;
+    const moving = ml > 0.05; const M = this.moveRef; const twin = g.save.data.settings.controlMode === 'twin';
+    if (!moving) M.on = false;
+    else {
+      const sa = Math.atan2(mx, my); const d = M.on ? angDiff(M.stick, sa) : 0;
+      if (twin || !M.on || Math.abs(d) >= 0.7) { M.on = true; M.head = this.cam.yaw - sa; }   // read against the screen
+      else M.head -= d;                                                                           // steer
+      M.stick = sa;
+    }
+    this.moveYaw = moving ? M.head : null;
+    const wantX = Math.sin(M.head) * ml, wantZ = Math.cos(M.head) * ml;
     const maxSp = (this.swim ? 5.6 : 6.4) * (this.buffs.quick > 0 ? 1.15 : 1);
     // roll
     const R = this.roll;
@@ -143,15 +169,17 @@ export class Player {
     this.updateLock(step, inp, enemies);
     const wantAim = inp.fire || (this.locked && g.autoBlast) || this.charging; this.aimT = wantAim ? 0.35 : Math.max(0, this.aimT - step);
     const aiming = this.aimT > 0 && R.t < 0; this.aimW = damp(this.aimW, aiming ? 1 : 0, aiming ? 14 : 5, step);
-    // Movement wins over old targets, including while BLAST is held. Aim assist is
-    // restricted to the chosen heading, so an enemy behind cannot pin Knox in place.
+    // Facing. Movement wins over a target, including while BLAST is held: the lock cone in updateLock() is
+    // tied to the heading he is steering, so running away from something drops the lock and his body turns
+    // with him -- he never moon-walks backwards at a monster he has decided to leave (measured before this:
+    // 9.24 m covered with his body 180deg off his travel). Aim assist therefore always points where he walks.
     let targetYaw = this.faceYaw;
     if (R.t >= 0) targetYaw = Math.atan2(R.dirx, R.dirz);
     else if (this.locked) targetYaw = Math.atan2(this.locked.x - this.x, this.locked.z - this.z);
     else if (twin) targetYaw = this.cam.yaw;
-    else if (moving) targetYaw = this.moveYaw;
+    else if (moving) targetYaw = M.head;
     else if (aiming || looking) targetYaw = this.cam.yaw;
-    this.faceYaw = dampAng(this.faceYaw, targetYaw, 18, step);
+    this.faceYaw = dampAng(this.faceYaw, targetYaw, this.locked ? 22 : 16, step);
     // firing
     let autoOk = false;
     // 45deg = half the horizontal FOV on a phone at the 50deg vertical FOV: auto-blast anything ON SCREEN when it is close, but never
@@ -168,13 +196,25 @@ export class Player {
     else if (fireHeld && this.fireCd <= 0 && (R.t < 0 || R.t >= 0.30)) { this.fireShot(false); this.fireCd = 1 / (this.ammo.rate * (this.buffs.overcharge > 0 ? 1.35 : 1)); }
     if (inp.ult && this.ult >= 100) g.breaker(this);
     this.combatT = enemies.some(e => e.alive) ? 3 : Math.max(0, this.combatT - step);
-    // Follow throughout the turn, not only after releasing the stick. Manual look
-    // temporarily owns the camera; follow resumes smoothly after the gesture ends.
-    if (!twin && this.cam.autoT <= 0) {
-      const followYaw = R.t >= 0 ? Math.atan2(R.dirx, R.dirz) : moving ? this.moveYaw : this.faceYaw;
-      const dd = angDiff(this.cam.yaw, followYaw);
-      this.cam.yaw += clamp(dd * 7, -4.8, 4.8) * step;
+    // Camera follow: the camera lives behind wherever he is heading, and it does this WHILE the stick is down.
+    // Safe only because the heading above never reads the camera back: the target is a world angle the follow
+    // cannot move, so the gap can only shrink. Hold a direction and it settles behind him and stops; turn the
+    // thumb and it comes round; pull straight back and it swings the whole way to show what he turned to face.
+    // It runs even while locked, because turning to see what is behind you is exactly when you are locked onto
+    // something in front -- the lock pull gets him back once he stops moving.
+    this.idleT = moving ? 0 : this.idleT + step;
+    const antipode = dd => Math.abs(dd) > Math.PI - 1e-3 ? (dd < 0 ? -1 : 1) * (Math.PI - 1e-3) : dd;   // a dead-straight about-face has no shortest way round; commit to a side
+    if (!twin && this.cam.autoT <= 0 && moving && this.speedN > 0.12) {
+      const dd = antipode(angDiff(this.cam.yaw, M.head));
+      if (Math.abs(dd) > 0.03) this.cam.yaw += clamp(dd * 3.0, -3.0, 3.0) * step;
     }
+    if (!twin && this.cam.autoT <= 0 && !this.locked && !moving && this.idleT > 0.28 && this.idleT < 2.4) {
+      const dd = antipode(angDiff(this.cam.yaw, this.faceYaw));
+      if (Math.abs(dd) > 0.04) this.cam.yaw += clamp(dd * 3.0, -3.0, 3.0) * step;
+    }
+    // Pull the camera onto the locked enemy while he stands still (up to 150deg, so a threat behind comes round
+    // into view). Never while moving: the follow owns the camera then, and a pull would fight it.
+    if (this.locked && !looking && !moving && this.lockAng < 2.6) { const ty = Math.atan2(this.locked.x - this.x, this.locked.z - this.z); const dd = angDiff(this.cam.yaw, ty); this.cam.yaw += clamp(dd * 1.6, -1.9, 1.9) * step; }
     this.cam.targetDist = (g.bossActive ? 6.0 : 5.0) - (aiming ? 0.7 : 0) + (this.swim ? 0.8 : 0);
     // shield/overcharge visuals
     if (this.buffs.shield > 0 && Math.random() < 0.3) this.ctx.particlesAdd.one(this.x + rnd(-.5, .5), this.y + rnd(0.2, 1.6), this.z + rnd(-.5, .5), { type: P.DOT, color: new THREE.Color(0xffcf4a), life: 0.5, size: 0.15, sizeEnd: 0, vx: 0, vy: 0.4, vz: 0 });

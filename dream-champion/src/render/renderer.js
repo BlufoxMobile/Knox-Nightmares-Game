@@ -1,6 +1,6 @@
 // Renderer + post pipeline: HDR scene RT (MSAA) -> custom bloom -> single composite pass (ACES, grade, vignette, CA, grain, underwater, overlays).
 import * as THREE from 'three';
-import { TIERS, DynamicResolution } from '../core/quality.js';
+import { TIERS, DynamicResolution, isIOS } from '../core/quality.js';
 
 const FSQ_VS = `varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 1.0, 1.0); }`;
 
@@ -67,15 +67,25 @@ export class Renderer {
     this.fx = { underwater: 0, hurt: 0, flash: 0, flashColor: new THREE.Color(1, 1, 1), ultRing: 0, ultCenter: new THREE.Vector2(.5, .5), fade: 0, desat: 0, vision: 0 };
     this._buildPost();
     canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); this.lost = true; this.onLost && this.onLost(); });
-    canvas.addEventListener('webglcontextrestored', () => { this.lost = false; this._buildPost(); this.resize(true); this.onRestored && this.onRestored(); });
+    // iOS kills the WebGL context under memory pressure and then hands it back. Everything on the GPU is
+    // gone at that point: the post materials, every render target, and whatever the dynamic-resolution
+    // controller decided while frames were taking forever. Rebuild all of it from scratch, put the scale back
+    // to 1 so it does not come back at a quarter of the resolution, and let the game re-fit the camera.
+    canvas.addEventListener('webglcontextrestored', () => { this.lost = false; this._buildPost(); this.dyn.scale = 1; this.dyn.settle(3); this.resize(true); this.onRestored && this.onRestored(); });
   }
   setTier(name) {
     this.tierName = name; this.tier = TIERS[name]; this.dyn.min = this.tier.dynMin; this.dyn.scale = 1;
+    // A 4x-MSAA half-float scene target at DPR 2 is ~85 MB on a 15 Pro before a single texture is counted, and
+    // iOS Safari answers that kind of footprint by killing the context ("half the screen went black, then it
+    // came back looking wrong"). The player wants the 1080p-class crispness, so the DPR stays; the multisample
+    // count is what halves the buffer, and 2x at native DPR 2 still gives clean edges.
+    if (isIOS && navigator.platform !== 'MacIntel') this.tier = { ...this.tier, msaa: Math.min(this.tier.msaa, 2) };
     this.gl.shadowMap.enabled = true; this.gl.shadowMap.type = name === 'low' ? THREE.BasicShadowMap : THREE.PCFShadowMap;
     this.direct = false; this.gl.toneMapping = THREE.NoToneMapping;
     this.resize(true);
   }
   _buildPost() {
+    for (const m of [this.matBright, this.matKawase, this.matComp]) m && m.dispose(); this.quadGeo && this.quadGeo.dispose();   // rebuilt on context restore; do not leak the old set
     const mk = (fs, uniforms) => new THREE.ShaderMaterial({ vertexShader: FSQ_VS, fragmentShader: fs, uniforms, depthTest: false, depthWrite: false });
     this.quadGeo = new THREE.BufferGeometry(); this.quadGeo.setAttribute('position', new THREE.Float32BufferAttribute([-1, -1, 0, 3, -1, 0, -1, 3, 0], 3)); this.quadGeo.setAttribute('uv', new THREE.Float32BufferAttribute([0, 0, 2, 0, 0, 2], 2));
     this.quad = new THREE.Mesh(this.quadGeo); this.quad.frustumCulled = false; this.quadScene = new THREE.Scene(); this.quadScene.add(this.quad); this.quadCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);

@@ -42,12 +42,34 @@ export class Game {
     this.autoBlast = save.data.settings.autoBlast !== false; this.difficulty = save.data.settings.difficulty || 'brave'; this.hpMul = 1; this.bossActive = false; this.stats = null;
     this.fps = { t: 0 }; this.paused = false;
     addEventListener('resize', () => this.onResize()); this.onResize();
-    document.addEventListener('visibilitychange', () => { if (document.hidden) { if (this.state === 'play') this.pause(); } });
+    // iOS Safari is casual about resize events: the toolbar collapsing, a notification banner, coming back from
+    // the app switcher and an orientation change can all leave innerWidth/innerHeight changed with no event, or
+    // with one that fires mid-transition at a size the viewport never settles on. A canvas laid out for the old
+    // size then covers only part of the screen (the rest is body background: "half the screen blacks out")
+    // and the projection no longer matches the canvas. Listen to everything that could mean the viewport moved,
+    // and -- the one that cannot be missed -- compare the size every frame in update().
+    if (window.visualViewport) visualViewport.addEventListener('resize', () => this.onResize());
+    addEventListener('orientationchange', () => { this.onResize(); setTimeout(() => this.onResize(), 350); });
+    addEventListener('pageshow', () => this.onResize()); addEventListener('focus', () => this.onResize());
+    document.addEventListener('visibilitychange', () => { if (document.hidden) { if (this.state === 'play') this.pause(); } else this.onResize(); });
+    // Context loss. iOS drops the WebGL context under memory pressure. While it is gone nothing can be drawn;
+    // when it comes back the renderer rebuilds its targets and we re-fit the camera. If it does NOT come back
+    // within a few seconds the player used to be stuck on a black screen with no way out but killing the app.
+    // Now they get a tap-to-resume that reloads; progress is in save data, so nothing is lost but the wave.
+    this.renderer.onLost = () => { clearTimeout(this._ctxT); this._ctxT = setTimeout(() => { if (this.renderer.lost) this.showRecovery(); }, 2500); };   // wall clock: the game clock may be paused
+    this.renderer.onRestored = () => { clearTimeout(this._ctxT); this.hideRecovery(); this.onResize(); this.renderer.dyn.settle(3); };
     matchMedia('(orientation: portrait)').addEventListener('change', e => { if (e.matches && this.state === 'play') this.pause(); });
     hud.setTouchVisible(isTouchDevice()); hud.lefty(!!save.data.settings.lefty); this.input.setLefty(!!save.data.settings.lefty); this.input.applyLayout(save.data.settings);
     if (!isTouchDevice()) document.body.classList.add('nokb');
   }
   onResize() { this.renderer.resize(); this.camera.aspect = innerWidth / innerHeight; this.camera.updateProjectionMatrix(); }
+  showRecovery() {
+    if (this._rec) return; const d = document.createElement('div'); this._rec = d;
+    d.style.cssText = 'position:absolute;inset:0;z-index:40;background:#000;color:#fff;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:14px;font:600 20px/1.3 system-ui,sans-serif;letter-spacing:.06em;text-align:center;padding:24px';
+    d.innerHTML = '<div>The dream flickered.</div><div style="font-size:14px;opacity:.7;font-weight:400">Tap anywhere to keep going.</div>';
+    d.addEventListener('pointerdown', () => location.reload(), { once: true }); document.getElementById('app').appendChild(d);
+  }
+  hideRecovery() { if (this._rec) { this._rec.remove(); this._rec = null; } }
   // ---------- world lifecycle ----------
   async loadWorld(key, onProgress) {
     await this.assets.loadGroup(key, onProgress);
@@ -104,7 +126,10 @@ export class Game {
     fxdom.fade(1, 500); await new Promise(r => setTimeout(r, 520));
     this.audio.setMusic(null, 1.2);
     let ok = false;
-    try { ok = await this.playVideo(this.assets.url(vid.url)); } catch (_) { ok = false; }
+    // The opening needs its premise said out loud, or a new player watches a boy get into a bed and wonders why.
+    const story = [{ t0: 0.8, t1: 6.2, text: 'Knox sneaks into his parents\u2019 room because he is having trouble sleeping.' },
+                   { t0: 6.6, t1: 11.7, text: 'If only there was a way to fight off these bad nightmares\u2026' }];
+    try { ok = await this.playVideo(this.assets.url(vid.url), story); } catch (_) { ok = false; }
     if (!ok) { fxdom.fade(0, 300); }          // couldn't play: skip the beat rather than show a broken scene
     this.cine = null; this.state = 'title';
   }
@@ -121,7 +146,7 @@ export class Game {
     await new Promise(r => setTimeout(r, 1200)); fxdom.letterbox(false); this.cine = null; hud.hideUI(false); hud.hide();
   }
   map() { this.state = 'map'; hud.hide(); this.cancel(); this.clearHome(); this.restoreScene(); this.input.unlockMouse(); panels.map({ slain: save.data.slain, secrets: save.data.secrets }, a => { if (a.startsWith('world:')) this.enterWorld(a.split(':')[1]); else if (a === 'settings') panels.settings(x => { if (x === 'back') this.map(); else this.applySetting(x); }, save.data.settings); }); }
-  applySetting(x) { const [, k, v] = x.split(':'); const s = save.data.settings; if (k === 'autoBlast') { s.autoBlast = v === 'true'; this.autoBlast = s.autoBlast; } else if (['controlMode','wakeReplay'].includes(k)) { s[k] = v; this.player.steering.active = false; } else if (['controlSize','controlOpacity','controlInset','controlHeight'].includes(k)) { s[k] = +v; this.input.applyLayout(s); } else if (k === 'threatWarnings') s[k] = v === 'true'; else if (k === 'look') s.look = +v; else if (k === 'lefty') { s.lefty = v === 'true'; hud.lefty(s.lefty); this.input.setLefty(s.lefty); } else if (k === 'shake') s.shake = +v; else if (k === 'quality') { s.quality = v; if (v !== 'auto') this.setTier(v); } else if (k === 'difficulty') { s.difficulty = v; this.difficulty = v; } save.write(); }
+  applySetting(x) { const [, k, v] = x.split(':'); const s = save.data.settings; if (k === 'autoBlast') { s.autoBlast = v === 'true'; this.autoBlast = s.autoBlast; } else if (['controlMode','wakeReplay'].includes(k)) { s[k] = v; this.player.moveRef.on = false; } else if (['controlSize','controlOpacity','controlInset','controlHeight'].includes(k)) { s[k] = +v; this.input.applyLayout(s); } else if (k === 'threatWarnings') s[k] = v === 'true'; else if (k === 'look') s.look = +v; else if (k === 'lefty') { s.lefty = v === 'true'; hud.lefty(s.lefty); this.input.setLefty(s.lefty); } else if (k === 'shake') s.shake = +v; else if (k === 'quality') { s.quality = v; if (v !== 'auto') this.setTier(v); } else if (k === 'difficulty') { s.difficulty = v; this.difficulty = v; } save.write(); }
   async wake(on) {
     try { if (on) { if (!this._wl) this._wl = await navigator.wakeLock.request('screen'); } else if (this._wl) { this._wl.release(); this._wl = null; } } catch (_) { }
   }
@@ -188,6 +213,7 @@ export class Game {
     if (this.bloodT > 0) { this.bloodT -= real; fx.hurt = Math.max(fx.hurt, 0.6); }
     this.audio.setListener(this.camera.position.x, this.camera.position.z, p.cam.yaw);
     this.fill.position.copy(this.camera.position); this.fill.position.y += 1.2; this.fill.intensity = this.state === 'play' ? (this.world && this.world.THEME.underwater ? 10 : 7) : (this.state === 'cine' || this.state === 'title' || this.state === 'map') ? 5 : 0;
+    if (innerWidth !== this.renderer.w || innerHeight !== this.renderer.h) this.onResize();   // see the constructor: iOS drops resize events
     // dynamic resolution
     if (this.state === 'play' && !this.paused && this.renderer.dyn.sample(real * 1000, real)) { this.renderer.resize(true); this.renderer.dyn.settle(2); }
     if (this.world && this.world.THEME.underwater) { fx.underwater = 1; }
@@ -403,5 +429,5 @@ export class Game {
   }
   finalCard() { hud.hide(); panels.victory(a => { if (a === 'reset') { save.data.slain = {}; save.write(); this.state = 'map'; this.loadWorld('forest').then(() => this.title()); } else this.ending(); }); }
   primeVideo(url) { const v = document.createElement('video'); v.src = url; v.playsInline = true; v.preload = 'auto'; v.muted = false; v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:15;opacity:0'; document.getElementById('app').appendChild(v); this._primed = { v, p: v.play().catch(() => null) }; return this._primed; }
-  playVideo(url) { return new Promise(res => { const pre = this._primed; this._primed = null; const v = pre ? pre.v : document.createElement('video'); if (!pre) { v.src = url; v.playsInline = true; } v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:15'; v.muted = false; if (!pre) document.getElementById('app').appendChild(v); let done = false; let wd = 0; const end = ok => { if (done) return; done = true; clearTimeout(wd); v.remove(); res(ok); }; v.onended = () => end(true); v.onerror = () => end(false); /* Watchdog: if 'ended' never arrives -- a stalled decode, a tab backgrounded mid-clip -- the player is left on a frozen frame with the game awaiting a promise that will never settle. Losing a level is exactly when that must not happen, so give up after the clip's own length plus slack. */ const arm = () => { clearTimeout(wd); const d = isFinite(v.duration) && v.duration > 0 ? v.duration : 20; wd = setTimeout(() => end(true), (d + 2) * 1000); }; v.onloadedmetadata = arm; arm(); (pre ? pre.p.then(() => { if (v.paused) throw new Error('blocked'); }) : v.play()).then(() => { fxdom.cut(0); const skip = () => end(true); v.addEventListener('pointerdown', skip); }).catch(() => end(false)); }); }
+  playVideo(url, captions) { return new Promise(res => { const pre = this._primed; this._primed = null; const v = pre ? pre.v : document.createElement('video'); if (!pre) { v.src = url; v.playsInline = true; } v.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;z-index:15'; v.muted = false; if (!pre) document.getElementById('app').appendChild(v); /* Captions ride on top of the clip as timed cues; a cue is the story beat the film cannot say on its own. */ let cap = null, capT = 0; if (captions && captions.length) { cap = document.createElement('div'); cap.style.cssText = 'position:absolute;left:8%;right:8%;bottom:9%;z-index:16;text-align:center;color:#fff;font:600 clamp(15px,2.6vw,24px)/1.35 var(--ui,system-ui,sans-serif);letter-spacing:.03em;text-shadow:0 2px 2px #000,0 0 18px rgba(0,0,0,.9);opacity:0;transition:opacity .45s ease;pointer-events:none'; document.getElementById('app').appendChild(cap); capT = setInterval(() => { const t = v.currentTime; const c = captions.find(c => t >= c.t0 && t < c.t1); if (c && cap.textContent !== c.text) { cap.textContent = c.text; cap.style.opacity = '1'; } else if (!c && cap.style.opacity !== '0') cap.style.opacity = '0'; }, 90); } let done = false; let wd = 0; const end = ok => { if (done) return; done = true; clearTimeout(wd); clearInterval(capT); cap && cap.remove(); v.remove(); res(ok); }; v.onended = () => end(true); v.onerror = () => end(false); /* Watchdog: if 'ended' never arrives -- a stalled decode, a tab backgrounded mid-clip -- the player is left on a frozen frame with the game awaiting a promise that will never settle. Losing a level is exactly when that must not happen, so give up after the clip's own length plus slack. */ const arm = () => { clearTimeout(wd); const d = isFinite(v.duration) && v.duration > 0 ? v.duration : 20; wd = setTimeout(() => end(true), (d + 2) * 1000); }; v.onloadedmetadata = arm; arm(); (pre ? pre.p.then(() => { if (v.paused) throw new Error('blocked'); }) : v.play()).then(() => { fxdom.cut(0); const skip = () => end(true); v.addEventListener('pointerdown', skip); }).catch(() => end(false)); }); }
 }

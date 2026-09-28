@@ -8,8 +8,11 @@ import { dir3, seeded, Disposer, shadowMats, caster, stdMat, xform, merge, rough
 export const THEME = {
   key: 'forest', name: 'THE HOLLOW WOODS', sub: 'Skinwalkers', tagline: 'Something is wearing the forest.', boss: 'hollowstag', bossName: 'THE HOLLOW STAG', bossTitle: 'NIGHTMARE ALPHA', bossQuote: '"I\'ve been wearing your dreams, Knox."', ammo: 'starfire', accent: 0xff7a2f, radius: 19, underwater: false,
   sky: { zenith: 0x0a0c1e, horizon: 0x3a1a2c, ground: 0x030205, moonColor: 0xff4a2c, moonDir: dir3(-0.5, 0.42, -0.8), moonSize: 0.025, moonGlow: 1.4, stars: 1, clouds: 0.6, cloudColor: 0x241420, aurora: 0, underwater: 0 },
-  rig: { hemi: [0x3c4458, 0x0a0806, 1.1], key: [0xffb08c, 2.4], keyDir: [-0.5, 0.6, -0.8], rim: [0x6a7cc0, 0.6], rimDir: [12, 6, 14], lamp: [0xffd9a0, 60, 16], fog: [0x0b0912, 0.045], env: 0.25 },
-  grade: { exposure: 1.0, lift: [0.0, 0.0, 0.012], gain: [1.02, 0.95, 1.0], saturation: 0.88, contrast: 1.0, bloom: 0.55, vignette: 0.6 },
+  rig: { hemi: [0x3c4458, 0x0e0c0a, 1.75], key: [0xffb08c, 2.6], keyDir: [-0.5, 0.6, -0.8], rim: [0x6a7cc0, 0.6], rimDir: [12, 6, 14], lamp: [0xffd9a0, 60, 16], fog: [0x0b0912, 0.038], env: 0.25 },
+  // Brightness was measured, not guessed: the forest averaged 28/255 with 41% of the frame under 20 -- the player
+  // could not see the monsters because he could not see anything. Exposure, a lifted black floor, more hemisphere
+  // fill and a lighter vignette bring the mean up without turning night into day (see grave.js / sea.js too).
+  grade: { exposure: 1.34, lift: [0.018, 0.016, 0.03], gain: [1.02, 0.95, 1.0], saturation: 0.88, contrast: 0.97, bloom: 0.55, vignette: 0.46 },
   music: { bed: 'forest_bed', combat: 'forest_combat', boss: 'forest_boss' },
 };
 

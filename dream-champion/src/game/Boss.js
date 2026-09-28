@@ -11,6 +11,7 @@ const _c = new THREE.Color(); const RED = 0xff2438;
 export class Boss extends Enemy {
   spawn(x, z, opts = {}) {
     super.spawn(x, z, { emerge: 0.01, kind: 'ground' }); this.noHit = true; this.noLock = true; this.bossIntro = true; this.phase = 1; this.enraged = false; this.weakOpen = false; this.moveCd = 2.5; this.move = null; this.lastMove = null; this.weakCd = 0; this.mt = 0; this.adds = 0; this.blackoutT = 0; this.state = 'intro'; this.inner.position.y = -this.proto.minY * this.proto.baseScale;
+    this.rimK = 0.75;   // a boss is a wall of surface; the full rim would read as a neon outline
     if (this.def.swim) { this.y = 6; this.ty = 6; }
     this.game.director.bossIntro(this);
   }

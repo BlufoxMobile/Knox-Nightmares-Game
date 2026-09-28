@@ -8,6 +8,7 @@ import { P } from '../render/particles.js';
 import { D } from '../render/decals.js';
 import { clamp, lerp, damp, dampAng, angDiff, rnd, pick } from '../core/math.js';
 import { patchFog } from '../render/fx.js';
+import { patchRim, makeXray, rimColor, worldK, update as hlUpdate } from '../render/highlight.js';
 
 const _v = new THREE.Vector3(), _c = new THREE.Color(), _c2 = new THREE.Color(), _q = new THREE.Quaternion(), _ax = new THREE.Vector3();
 const RED = new THREE.Color(0xff2438);
@@ -33,7 +34,11 @@ export class Enemy {
   constructor(ctx, proto) {
     this.ctx = ctx; this.game = ctx.game; this.proto = proto; this.def = proto.def; this.key = proto.key; this.alive = false; this.boss = !!this.def.boss;
     this.obj = proto.rigged ? skClone(proto.scene) : proto.scene.clone(true); this.obj.visible = false;
-    this.mats = []; this.obj.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.emissive = new THREE.Color(0); o.castShadow = ctx.renderer.tier.shadowCasters !== 'hero'; o.receiveShadow = true; o.frustumCulled = false; this.mats.push(o.material); if (!proto.rigged) { o.material.onBeforeCompile = proto.scene.children[0]?.material?.onBeforeCompile || o.material.onBeforeCompile; proto.patchSwim(o.material); } } });
+    this.mats = []; const meshes = []; this.obj.traverse(o => { if (o.isMesh) { o.material = o.material.clone(); o.material.emissive = new THREE.Color(0); o.castShadow = ctx.renderer.tier.shadowCasters !== 'hero'; o.receiveShadow = true; o.frustumCulled = false; this.mats.push(o.material); meshes.push(o); if (!proto.rigged) { o.material.onBeforeCompile = proto.scene.children[0]?.material?.onBeforeCompile || o.material.onBeforeCompile; proto.patchSwim(o.material); } } });
+    // readability (see render/highlight.js): moonlit rim on the body, a ghost draw where scenery hides it.
+    // Body draws at renderOrder 1 so the ghost (0.5) is depth-tested against the WORLD only, never the body.
+    this.rimU = { value: new THREE.Vector4(1, 1, 1, 0) }; this.xrayColor = { value: new THREE.Vector3(1, 1, 1) }; this.xrayA = { value: 0 }; this.rimCol = rimColor(ctx.game.world.THEME, new THREE.Color()); this.rimWorld = worldK(ctx.game.world.THEME); this.xr = []; this.xrT = 0;
+    for (const o of meshes) { patchRim(o.material, this.rimU); o.renderOrder = 1; this.xr.push(makeXray(o, proto, this.xrayColor, this.xrayA)); }
     this.obj.scale.setScalar(proto.baseScale); this.inner = new THREE.Group(); this.inner.add(this.obj); this.inner.position.y = -proto.minY * proto.baseScale; this.root = new THREE.Group(); this.root.add(this.inner); ctx.scene.add(this.root);
     if (proto.rigged) { this.anim = new AnimGraph(this.obj, proto.clips); this.bones = {}; this.obj.traverse(o => { if (o.isBone) this.bones[o.name] = o; }); }
     this.x = 0; this.z = 0; this.y = 0; this.px = 0; this.pz = 0; this.vx = 0; this.vz = 0; this.face = 0; this.r = this.def.r; this.height = this.def.height; this.headY = this.def.headY; this.state = 'dead';
@@ -45,6 +50,7 @@ export class Enemy {
     this.face = Math.atan2(g.player.x - x, g.player.z - z); this.y = d.swim ? rnd(d.swim[0], d.swim[1]) : 0; this.ty = this.y; this.tilt = 0;
     this.root.position.set(x, this.y, z); this.root.rotation.set(0, this.face, 0); this.root.visible = true; this.obj.visible = true; this.inner.position.y = -this.proto.minY * this.proto.baseScale; this.inner.rotation.set(0, 0, 0); this.obj.scale.setScalar(this.proto.baseScale);
     for (const m of this.mats) { m.opacity = 1; m.transparent = false; m.emissive.setRGB(0, 0, 0); m.emissiveIntensity = 1; }
+    rimColor(g.world.THEME, this.rimCol); this.rimWorld = worldK(g.world.THEME); this.xrT = 0;
     if (this.anim) { this.anim.stopAll(); for (const b in this.bones) this.bones[b].scale.setScalar(1); }
     this.kind = opts.kind || 'ground'; this.emergeT = opts.emerge ?? (this.kind === 'grave' ? 1.6 : this.kind === 'treeline' ? 0.9 : 0.6);
     if (this.kind === 'grave') { this.inner.position.y -= this.height; }
@@ -59,7 +65,7 @@ export class Enemy {
     let mul = 1;
     if (this.boss) { mul *= this.weakOpen ? (head ? 1.6 : 1) : (this.enraged ? 0.5 : 0.38); } else if (head) mul = 1;
     if (g.player.buffs.vision > 0) mul *= 1.2;
-    const amt = Math.round(dmg * mul); this.hp -= amt; this.flash = 0.06; this.hitT = 0.25;
+    const amt = Math.round(dmg * mul); this.hp -= amt; this.flash = 0.08; this.hitT = 0.25;   // 0.06 was under four frames of white; the rim keeps a fading edge for the rest of hitT
     const kind = head ? 'weak' : 'body'; g.onEnemyHit(this, amt, head, proj);
     if (!this.boss) { const kb = proj && proj.knock ? proj.knock : 0.35; this.x += dirx * kb; this.z += dirz * kb; if (this.hp > 0 && this.stagger <= 0 && this.state !== 'attack' && this.anim) { this.anim.upperShot(d.clips.hit, 0.05, 2); } }
     if (this.boss) { this.stagger = Math.max(this.stagger, 0.05); }
@@ -78,10 +84,10 @@ export class Enemy {
     g.onEnemyKill(this, head, dirx, dirz, proj);
     if (this.anim) { const clip = this.def.clips.death; this.anim.shot(clip, null, 0.05, { hold: true, timeScale: 1.4 }); }
     else { this.tumble = 1; }
-    this.vx = dirx * 2.5; this.vz = dirz * 2.5; this.blob.visible = false;
+    this.vx = dirx * 2.5; this.vz = dirz * 2.5; this.blob.visible = false; g.hud.threat(this, null); for (const x of this.xr) x.visible = false;
   }
   releaseToken() { if (this.token) { this.game.director.release(this.token, this); this.token = null; } }
-  despawn() { this.alive = false; this.root.visible = false; this.obj.visible = false; this.state = 'dead'; this.releaseToken(); if (this.decal !== undefined && this.decal !== null) { this.ctx.decals.kill(this.decal); this.decal = null; } if (this.anim) this.anim.stopAll(); }
+  despawn() { this.alive = false; this.root.visible = false; this.obj.visible = false; this.state = 'dead'; this.releaseToken(); this.game.hud.threat(this, null); if (this.decal !== undefined && this.decal !== null) { this.ctx.decals.kill(this.decal); this.decal = null; } if (this.anim) this.anim.stopAll(); }
   // ---------- fixed step ----------
   fixedUpdate(step, player, enemies) {
     const g = this.game, d = this.def; this.px = this.x; this.pz = this.z;
@@ -122,6 +128,7 @@ export class Enemy {
     }
     // flash / tint
     const f = this.flash > 0 ? (this.boss ? 0.35 : 0.8) : 0; const vision = g.player.buffs.vision > 0; for (const m of this.mats) { if (f) m.emissive.setRGB(f, f, f); else if (vision) m.emissive.setRGB(0.8, 0.05, 0.05); else if (this.windup > 0) { const p = (Math.sin(g.time * 50) * 0.5 + 0.5) * 0.7; m.emissive.setRGB(p, p * 0.1, p * 0.05); } else if (this.boss && this.weakOpen) { m.emissive.setRGB(0.6, 0.1, 0.0); } else if (this.def.elite) { const q = 0.16 + Math.sin(g.time * 3) * 0.05; m.emissive.setRGB(q, q * 0.12, q * 0.05); } else m.emissive.setRGB(0, 0, 0); }
+    hlUpdate(this, dt);
   }
 }
 

@@ -13,7 +13,7 @@ function player(autoBlast = false) {
   Object.assign(p, { alive:true, x:0, y:0, z:0, vx:0, vz:0, faceYaw:Math.PI,
     hp:100, ult:0, comboT:0, fireCd:0, aimT:0, aimW:0, combatT:0, charging:false,
     buffs:{quick:0,shield:0,overcharge:0,vision:0},
-    steering:{active:false}, moveYaw:null, roll:{t:-1,charges:2},
+    moveRef:{on:false,head:Math.PI,stick:0}, idleT:9, moveYaw:null, roll:{t:-1,charges:2},
     locked:null, lockT:0, tapLock:0, ammo:AMMO.starfire, ammoKey:'starfire',
     root:new THREE.Group(), muzzleW:new THREE.Vector3(0,1.2,0),
     cam:{yaw:Math.PI,pitch:-0.17,autoT:0,dist:5,targetDist:5,shoulder:0.55,side:0.55,pos:new THREE.Vector3(),lookAt:new THREE.Vector3(),fovKick:0},

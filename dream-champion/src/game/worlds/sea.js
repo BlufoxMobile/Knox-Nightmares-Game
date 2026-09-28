@@ -10,7 +10,7 @@ export const THEME = {
   key: 'sea', name: 'THE DROWN', sub: 'Sharks & Megalodon', tagline: 'Ten thousand feet of teeth.', boss: 'megalodon', bossName: 'MEGALODON', bossTitle: 'THE THING BENEATH', bossQuote: '', ammo: 'depth', accent: 0x4fb7ff, radius: 19, underwater: true,
   sky: { zenith: 0x2a80b0, horizon: 0x03202e, ground: 0x010306, moonColor: 0x9fe6ff, moonDir: dir3(0.12, 0.96, 0.2), moonSize: 0.08, moonGlow: 1.8, stars: 0, clouds: 0, cloudColor: 0x000000, aurora: 0, underwater: 1 },
   rig: { hemi: [0x2c7a9c, 0x06161e, 1.2], key: [0x6fc8ff, 2.6], keyDir: [0.15, 0.95, 0.2], rim: [0x2fffc8, 0.6], rimDir: [-12, 4, 12], lamp: [0xbfe8ff, 50, 12], fog: [0x03202e, 0.05], env: 0.35 },
-  grade: { exposure: 1.0, lift: [0.0, 0.004, 0.012], gain: [0.9, 1.0, 1.08], saturation: 0.95, contrast: 1.0, bloom: 0.7, vignette: 0.6 },
+  grade: { exposure: 1.08, lift: [0.0, 0.006, 0.014], gain: [0.9, 1.0, 1.08], saturation: 0.95, contrast: 1.0, bloom: 0.7, vignette: 0.52 },
   music: { bed: 'sea_bed', combat: 'sea_combat', boss: 'sea_boss' },
 };
 
